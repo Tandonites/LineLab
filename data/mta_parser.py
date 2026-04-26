@@ -14,8 +14,8 @@ Outputs (in ./output/):
   network_graph.json   - adjacency graph for new-line simulation
 
 Usage:
-  python mta_parser.py --input MTA_Subway_Hourly_Ridership__2020-2024_20260426.csv
-  python mta_parser.py --input data.csv --max-rows 1000000 --skip-hourly
+    python3 mta_parser.py --input raw/MTA_Subway_Hourly_Ridership__2020-2024_20260426.csv
+    python3 mta_parser.py --input data.csv --max-rows 1000000 --skip-hourly
 """
 
 import csv
@@ -53,10 +53,14 @@ def parse_lines(station_complex: str) -> tuple:
     '23 St (F,M)'             -> ('23 St', ['F', 'M'])
     'Canal St (J,N,Q,R,W,Z,6)' -> ('Canal St', ['J','N','Q','R','W','Z','6'])
     """
-    match = re.search(r'\(([^)]+)\)', station_complex)
-    if match:
-        lines = [l.strip() for l in match.group(1).split(',') if l.strip()]
-        name  = station_complex[:match.start()].strip()
+    # Some station names contain parenthetical descriptors before the
+    # route list, e.g. "Cathedral Pkwy (110 St) (1)".
+    # The final parenthetical token is the route list.
+    matches = list(re.finditer(r'\(([^)]+)\)', station_complex))
+    if matches:
+        last_match = matches[-1]
+        lines = [l.strip() for l in last_match.group(1).split(',') if l.strip()]
+        name  = station_complex[:last_match.start()].strip()
     else:
         lines = []
         name  = station_complex.strip()
@@ -70,6 +74,14 @@ def parse_timestamp(ts: str) -> Optional[datetime]:
         except ValueError:
             continue
     return None
+
+
+def parse_numeric(value: str) -> float:
+    """Parse numeric strings that may include thousands separators."""
+    cleaned = (value or '').strip().replace(',', '')
+    if cleaned == '':
+        return 0.0
+    return float(cleaned)
 
 
 LINE_GROUPS = {
@@ -124,10 +136,10 @@ def parse(input_path: str, max_rows: int, skip_hourly: bool, output_dir: str):
                 borough     = row['borough'].strip()
                 payment     = row['payment_method'].strip()
                 fare_class  = row['fare_class_category'].strip()
-                ridership   = int(float(row['ridership']  or 0))
-                transfers   = int(float(row['transfers']  or 0))
-                lat         = float(row['latitude']       or 0)
-                lon         = float(row['longitude']      or 0)
+                ridership   = int(parse_numeric(row['ridership']))
+                transfers   = int(parse_numeric(row['transfers']))
+                lat         = parse_numeric(row['latitude'])
+                lon         = parse_numeric(row['longitude'])
 
                 station_name, lines = parse_lines(station_raw)
                 hour     = ts.hour
