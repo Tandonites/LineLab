@@ -2,7 +2,6 @@ import { useState, useCallback } from 'react'
 import SubwayMap from './components/SubwayMap'
 import LeftPanel from './components/LeftPanel'
 import Toast from './components/Toast'
-import { describeMockRoute, generateMockPrediction } from './lib/mockPredictor'
 
 export interface DrawnStation {
   id: string
@@ -171,7 +170,6 @@ export default function App() {
       drawnLine: [],
       prediction: null,
       mode: 'draw',
-      validationError: null,
     }))
   }, [])
 
@@ -233,22 +231,6 @@ export default function App() {
 
     setState(s => ({ ...s, loading: true, error: null }))
     try {
-      if (USE_MOCK_PREDICTION) {
-        const prediction = await generateMockPrediction(
-          state.drawnLine,
-          state.trainService
-        )
-        setState(s => ({
-          ...s,
-          loading: false,
-          prediction,
-          mode: 'results',
-          mockSummary: describeMockRoute(s.drawnLine, s.trainService),
-          validationError: null,
-        }))
-        return
-      }
-
       const res = await fetch('/api/simulate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -270,38 +252,13 @@ export default function App() {
         loading: false,
         prediction,
         mode: 'results',
-        validationError: null,
       }))
     } catch {
       setState(s => ({
         ...s,
         loading: false,
-        prediction: null,
-        mode: 'draw',
-        error: 'Prediction failed — backend unavailable or returned invalid data.',
+        error: 'Prediction failed — backend unavailable.',
       }))
-    } catch {
-      try {
-        const prediction = await generateMockPrediction(
-          state.drawnLine,
-          state.trainService
-        )
-        setState(s => ({
-          ...s,
-          loading: false,
-          prediction,
-          mode: 'results',
-          mockSummary: describeMockRoute(s.drawnLine, s.trainService),
-          error: 'Backend unavailable — showing mock simulation results.',
-          validationError: null,
-        }))
-      } catch {
-        setState(s => ({
-          ...s,
-          loading: false,
-          error: 'Prediction failed — mock data could not be generated.',
-        }))
-      }
     }
   }, [state.drawnLine, state.trainService])
 
