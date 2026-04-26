@@ -59,10 +59,11 @@ export interface AppState {
   error: string | null
   validationError: string | null
   trainService: TrainService
+  showAllStations: boolean
 }
 
 const SERVICE_RULES: Record<TrainService, { minMiles: number; maxMiles: number }> = {
-  local: { minMiles: 0.2, maxMiles: 0.5 },
+  local: { minMiles: 0.2, maxMiles: 0.75 },
   express: { minMiles: 0.5, maxMiles: 3 },
 }
 
@@ -111,6 +112,7 @@ export default function App() {
     error: null,
     validationError: null,
     trainService: 'local',
+    showAllStations: true,
   })
 
   const setMode = useCallback((mode: Mode) => {
@@ -127,8 +129,13 @@ export default function App() {
         error: validationError,
         prediction: null,
         mode: 'draw',
+        showAllStations: true,
       }
     })
+  }, [])
+
+  const setShowAllStations = useCallback((showAllStations: boolean) => {
+    setState(s => ({ ...s, showAllStations }))
   }, [])
 
   const addStation = useCallback((station: DrawnStation) => {
@@ -177,6 +184,7 @@ export default function App() {
       mode: 'draw',
       validationError: null,
       error: null,
+      showAllStations: true,
     }))
   }, [])
 
@@ -246,6 +254,7 @@ export default function App() {
         prediction,
         mode: 'results',
         validationError: null,
+        showAllStations: false,
       }))
     } catch {
       setState(s => ({
@@ -254,6 +263,7 @@ export default function App() {
         prediction: null,
         mode: 'draw',
         error: 'Prediction failed — backend unavailable or returned invalid data.',
+        showAllStations: true,
       }))
     }
   }, [state.drawnLine, state.trainService])
@@ -279,6 +289,8 @@ export default function App() {
           drawnLine={state.drawnLine}
           prediction={state.prediction}
           trainService={state.trainService}
+          showAllStations={state.showAllStations}
+          onToggleAllStations={setShowAllStations}
           newStationDraft={state.newStationDraft}
           onStationClick={addStation}
           onMapRightClick={setNewStationDraft}

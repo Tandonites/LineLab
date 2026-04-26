@@ -1,5 +1,9 @@
 @import 'tailwindcss';
 
+:root {
+  color-scheme: dark;
+}
+
 *, *::before, *::after {
   box-sizing: border-box;
 }
@@ -12,6 +16,46 @@ html, body, #root {
   overflow: hidden;
 }
 
+body {
+  background:
+    radial-gradient(circle at top left, rgba(56, 189, 248, 0.12), transparent 24%),
+    radial-gradient(circle at bottom right, rgba(249, 115, 22, 0.08), transparent 22%),
+    linear-gradient(180deg, #0b0e15 0%, #05070c 100%);
+  color: #f8fafc;
+  font-family: "SF Pro Display", "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  text-rendering: optimizeLegibility;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+::selection {
+  background: rgba(56, 189, 248, 0.28);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.24);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.34);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
 /* Leaflet z-index fixes */
 .leaflet-pane,
 .leaflet-control {
@@ -20,4 +64,27 @@ html, body, #root {
 .leaflet-top,
 .leaflet-bottom {
   z-index: 500;
+}
+
+.leaflet-container {
+  background: #070a11;
+}
+
+.leaflet-popup-content-wrapper,
+.leaflet-popup-tip {
+  background: rgba(12, 16, 25, 0.96);
+  color: #f8fafc;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.32);
+}
+
+.leaflet-popup-content {
+  margin: 12px 14px;
+}
+
+.leaflet-tooltip-dark {
+  background: rgba(13, 18, 28, 0.96);
+  color: #f8fafc;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.28);
 }
