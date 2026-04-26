@@ -7,7 +7,19 @@ import csv
 import json
 
 import networkx as nx
+import numpy as np
+import xgboost as xgb
 from fastapi import FastAPI, HTTPException
+try:
+    from predict import predict_new_line as _predict_new_line
+    _PREDICT_AVAILABLE = True
+except Exception:
+    try:
+        from src.predict import predict_new_line as _predict_new_line
+        _PREDICT_AVAILABLE = True
+    except Exception:
+        _PREDICT_AVAILABLE = False
+        _predict_new_line = None
 from fastapi.middleware.cors import CORSMiddleware
 from networkx.readwrite import json_graph
 from pydantic import BaseModel, Field
@@ -17,6 +29,11 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 STATIONS_PATH = ROOT_DIR / 'data' / 'processed' / 'stations.json'
 LINE_SUMMARY_PATH = ROOT_DIR / 'data' / 'processed' / 'line_summary.csv'
 TIME_GRAPH_PATH = ROOT_DIR / 'data' / 'processed' / 'mta_time_graph.json'
+RIDERSHIP_MONTHLY_PATH = ROOT_DIR / 'data' / 'processed' / 'ridership_monthly.csv'
+MONTHLY_COST_LABELS_PATH = ROOT_DIR / 'data' / 'raw' / 'monthly_operating_cost.csv'
+MODELS_DIR = ROOT_DIR / 'data' / 'models'
+STATION_FEATURES_CSV = ROOT_DIR / 'data' / 'raw' / 'station_features.csv'
+GTFS_TRIPS_PATH = ROOT_DIR / 'data' / 'gtfs_subway' / 'trips.txt'
 
 
 class StationInput(BaseModel):
@@ -61,6 +78,7 @@ class SimulationResponse(BaseModel):
     new_line_ridership: int
     peak_hour_ridership: int
     operational_cost_daily: int
+    operational_cost_monthly: int
     affected_lines: list[AffectedLine]
     affected_stations: list[AffectedStation]
     route_comparison: RouteComparison | None
@@ -73,6 +91,12 @@ class StationFeature(BaseModel):
     lat: float
     lon: float
     total_ridership: int = 0
+
+DEFAULT_VALID_LINES = {
+    '1', '2', '3', '4', '5', '6', '6X', '7', '7X',
+    'A', 'B', 'C', 'D', 'E', 'F', 'FS', 'FX', 'G', 'GS', 'H',
+    'J', 'L', 'M', 'N', 'Q', 'R', 'SI', 'SIR', 'S', 'W', 'Z',
+}
 
 
 app = FastAPI(title='Highball Backend', version='0.1.0')
@@ -143,8 +167,340 @@ def load_line_totals() -> dict[str, int]:
     return totals
 
 
+def load_system_service_stats() -> dict[str, float]:
+    """Load system-level baseline stats used by the cost formula."""
+    stats = {
+        'line_count': 20.0,
+        'station_count_total': 400.0,
+        'baseline_ridership_total': 100_000_000.0,
+        'baseline_transfers_total': 10_000_000.0,
+        'baseline_transfer_ratio': 0.10,
+    }
+    if not LINE_SUMMARY_PATH.exists():
+        return stats
+
+    try:
+        import pandas as pd  # local import to avoid changing top-level dependency behavior
+
+        df = pd.read_csv(LINE_SUMMARY_PATH)
+        if not df.empty:
+            rid = pd.to_numeric(df.get('total_ridership', 0), errors='coerce').fillna(0.0)
+            trn = pd.to_numeric(df.get('total_transfers', 0), errors='coerce').fillna(0.0)
+            stn = pd.to_numeric(df.get('station_count', 0), errors='coerce').fillna(0.0)
+            baseline_ridership_total = float(rid.sum())
+            baseline_transfers_total = float(trn.sum())
+            station_count_total = float(stn.sum())
+            line_count = float(len(df))
+            stats.update({
+                'line_count': line_count,
+                'station_count_total': station_count_total,
+                'baseline_ridership_total': baseline_ridership_total,
+                'baseline_transfers_total': baseline_transfers_total,
+                'baseline_transfer_ratio': baseline_transfers_total / max(1.0, baseline_ridership_total),
+            })
+    except Exception:
+        pass
+    return stats
+
+
+def load_cost_formula_params() -> dict[str, float]:
+    """
+    Calibrate a simple monthly cost formula from historical labels.
+
+    Formula basis:
+      monthly_cost ~= b0 + b1 * monthly_ridership + b2 * transfers_proxy
+    """
+    # Safe defaults if historical files are unavailable.
+    params: dict[str, float] = {
+        'intercept': 12_000_000.0,
+        'coef_ridership': 7.5,
+        'coef_transfers_proxy': 2.0,
+        'n_obs': 0.0,
+    }
+
+    if not RIDERSHIP_MONTHLY_PATH.exists() or not MONTHLY_COST_LABELS_PATH.exists():
+        return params
+
+    try:
+        import pandas as pd  # local import to avoid changing top-level dependency behavior
+
+        rid = pd.read_csv(RIDERSHIP_MONTHLY_PATH)
+        lab = pd.read_csv(MONTHLY_COST_LABELS_PATH)
+        if 'month' not in rid.columns or 'month' not in lab.columns:
+            return params
+
+        rid_col = 'monthly_ridership' if 'monthly_ridership' in rid.columns else 'ridership'
+        if rid_col not in rid.columns or 'monthly_operating_cost' not in lab.columns:
+            return params
+
+        rid = rid[['month', rid_col]].copy()
+        lab = lab[['month', 'monthly_operating_cost']].copy()
+        rid['month'] = pd.to_datetime(rid['month'], errors='coerce').dt.to_period('M').astype(str)
+        lab['month'] = pd.to_datetime(lab['month'], errors='coerce').dt.to_period('M').astype(str)
+        rid[rid_col] = pd.to_numeric(rid[rid_col], errors='coerce').fillna(0.0)
+        lab['monthly_operating_cost'] = pd.to_numeric(lab['monthly_operating_cost'], errors='coerce')
+
+        merged = rid.merge(lab, on='month', how='inner').dropna(subset=['monthly_operating_cost'])
+        if merged.empty:
+            return params
+
+        transfer_ratio = float(SYSTEM_SERVICE_STATS.get('baseline_transfer_ratio', 0.10))
+        line_count = float(SYSTEM_SERVICE_STATS.get('line_count', 20.0))
+        x1 = merged[rid_col].astype(float)
+        y = merged['monthly_operating_cost'].astype(float)
+
+        valid = x1 > 0
+        if valid.any():
+            unit_cost = (y[valid] / x1[valid]).replace([np.inf, -np.inf], np.nan).dropna()
+        else:
+            unit_cost = np.array([])
+
+        if len(unit_cost) > 0:
+            # System-wide average includes central overhead; use a reduced marginal factor for a single new corridor.
+            marginal_unit_cost = float(np.median(unit_cost)) * 0.62
+            params['coef_ridership'] = float(np.clip(marginal_unit_cost, 3.0, 20.0))
+            params['coef_transfers_proxy'] = float(params['coef_ridership'] * transfer_ratio * 0.45)
+
+        per_line_monthly = float(y.mean()) / max(1.0, line_count)
+        params['intercept'] = float(np.clip(per_line_monthly * 0.28, 5_000_000.0, 35_000_000.0))
+        params['n_obs'] = float(len(merged))
+    except Exception:
+        pass
+
+    return params
+
+def load_valid_route_ids() -> set[str]:
+    """Load canonical route IDs from GTFS trips; fallback to defaults."""
+    valid = set(DEFAULT_VALID_LINES)
+    if not GTFS_TRIPS_PATH.exists():
+        return valid
+
+    with GTFS_TRIPS_PATH.open(newline='', encoding='utf-8') as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            rid = str(row.get('route_id', '')).strip()
+            if rid:
+                valid.add(rid)
+    return valid
+
+
 STATION_FEATURES = load_station_features()
 LINE_TOTALS = load_line_totals()
+VALID_ROUTE_IDS = load_valid_route_ids()
+SYSTEM_SERVICE_STATS = load_system_service_stats()
+COST_FORMULA_PARAMS = load_cost_formula_params()
+
+
+# ── ML model loading ──────────────────────────────────────────────────────────
+
+def load_ml_models() -> tuple[xgb.Booster | None, xgb.Booster | None, dict]:
+    meta: dict = {
+        'feature_columns': [],
+        'log_target_daily': True,
+        'log_target_peak': False,
+        'fallback_peak_factor': 0.10,
+    }
+    rid_model: xgb.Booster | None = None
+    pf_model: xgb.Booster | None = None
+
+    feat_path = MODELS_DIR / 'feature_columns.json'
+    if feat_path.exists():
+        try:
+            meta = json.loads(feat_path.read_text(encoding='utf-8'))
+        except (ValueError, KeyError):
+            pass
+
+    rid_path = MODELS_DIR / 'ridership_model.json'
+    if rid_path.exists():
+        try:
+            m = xgb.Booster()
+            m.load_model(str(rid_path))
+            rid_model = m
+        except Exception:
+            rid_model = None
+
+    pf_path = MODELS_DIR / 'peak_factor_model.json'
+    if pf_path.exists():
+        try:
+            m = xgb.Booster()
+            m.load_model(str(pf_path))
+            pf_model = m
+        except Exception:
+            pf_model = None
+
+    return rid_model, pf_model, meta
+
+
+def load_cost_ml_artifacts() -> tuple[xgb.Booster | None, list[str]]:
+    model_path = MODELS_DIR / 'cost_model.json'
+    feat_path = MODELS_DIR / 'cost_feature_columns.json'
+    if not model_path.exists() or not feat_path.exists():
+        return None, []
+
+    try:
+        model = xgb.Booster()
+        model.load_model(str(model_path))
+    except Exception:
+        return None, []
+
+    try:
+        payload = json.loads(feat_path.read_text(encoding='utf-8'))
+        cols = payload.get('feature_columns', [])
+        cols = [str(c) for c in cols if c]
+    except Exception:
+        cols = []
+
+    return model, cols
+
+
+def load_station_feature_lookup() -> dict[str, dict]:
+    """Load station_features.csv into {station_complex_id: row_dict}."""
+    lookup: dict[str, dict] = {}
+    if not STATION_FEATURES_CSV.exists():
+        return lookup
+    with STATION_FEATURES_CSV.open(newline='', encoding='utf-8') as fh:
+        for row in csv.DictReader(fh):
+            sid = str(row.get('station_complex_id', '')).strip()
+            if sid:
+                lookup[sid] = row
+    return lookup
+
+
+RIDERSHIP_MODEL, PEAK_FACTOR_MODEL, MODEL_META = load_ml_models()
+COST_ML_MODEL, COST_ML_FEATURE_COLS = load_cost_ml_artifacts()
+STATION_FEATURE_LOOKUP = load_station_feature_lookup()
+
+BOROUGH_COLS = ['boro_Bronx', 'boro_Brooklyn', 'boro_Manhattan', 'boro_Queens', 'boro_Staten Island']
+BOROUGH_MAP = {
+    'bronx': 'boro_Bronx',
+    'brooklyn': 'boro_Brooklyn',
+    'manhattan': 'boro_Manhattan',
+    'queens': 'boro_Queens',
+    'staten island': 'boro_Staten Island',
+    'staten': 'boro_Staten Island',
+}
+
+
+def _row_to_vec(row: dict, lat: float, lon: float, num_lines: int) -> dict[str, float]:
+    """Convert a station_features row into the flat feature dict the model expects."""
+
+    def flt(key: float, default: float = 0.0) -> float:
+        try:
+            v = row.get(key, default)
+            return float(v) if v not in (None, '', 'nan') else default
+        except (ValueError, TypeError):
+            return default
+
+    boro_raw = str(row.get('borough', '')).strip().lower()
+    features: dict[str, float] = {
+        'num_lines': float(num_lines),
+        'lat': lat,
+        'lon': lon,
+        'pop_density_tract': flt('pop_density_tract'),
+        'population_500m': flt('population_500m'),
+        'median_income': flt('median_income'),
+        'commuters_tract': flt('commuters_tract'),
+        'bus_stops_250m': flt('bus_stops_250m'),
+        'bus_stops_500m': flt('bus_stops_500m'),
+    }
+    for col in BOROUGH_COLS:
+        features[col] = 0.0
+    mapped = BOROUGH_MAP.get(boro_raw)
+    if mapped:
+        features[mapped] = 1.0
+    return features
+
+
+def _interpolate_features(lat: float, lon: float, num_lines: int) -> dict[str, float]:
+    """For new stations with no lookup entry, interpolate from 3 nearest known stations."""
+    if not STATION_FEATURE_LOOKUP:
+        return {c: 0.0 for c in (['num_lines', 'lat', 'lon', 'pop_density_tract',
+                                   'population_500m', 'median_income', 'commuters_tract',
+                                   'bus_stops_250m', 'bus_stops_500m'] + BOROUGH_COLS)}
+
+    neighbours = sorted(
+        STATION_FEATURE_LOOKUP.values(),
+        key=lambda r: haversine_km(lat, lon, float(r.get('lat') or 0), float(r.get('lon') or 0)),
+    )[:3]
+
+    merged: dict[str, float] = {}
+    for key in ('pop_density_tract', 'population_500m', 'median_income',
+                'commuters_tract', 'bus_stops_250m', 'bus_stops_500m'):
+        vals = []
+        for r in neighbours:
+            try:
+                v = float(r.get(key) or 0)
+                vals.append(v)
+            except (ValueError, TypeError):
+                pass
+        merged[key] = float(np.mean(vals)) if vals else 0.0
+
+    # Pick majority borough from neighbours
+    boro_counts: dict[str, int] = {}
+    for r in neighbours:
+        b = str(r.get('borough', '')).strip()
+        boro_counts[b] = boro_counts.get(b, 0) + 1
+    dominant_boro = max(boro_counts, key=boro_counts.get) if boro_counts else ''
+
+    merged['borough'] = dominant_boro
+    vec = _row_to_vec(merged, lat, lon, num_lines)
+    return vec
+
+
+def build_feature_vector(station: 'StationInput', num_lines: int) -> list[float]:
+    """Build the ordered feature vector for one station."""
+    feature_cols: list[str] = MODEL_META.get('feature_columns', [])
+    if not feature_cols:
+        return []
+
+    row = STATION_FEATURE_LOOKUP.get(station.id)
+    if row is not None:
+        feat = _row_to_vec(row, station.lat, station.lon, num_lines)
+    else:
+        feat = _interpolate_features(station.lat, station.lon, num_lines)
+
+    return [feat.get(col, 0.0) for col in feature_cols]
+
+
+def predict_ridership_ml(stations: list['StationInput']) -> tuple[int, int]:
+    """
+    Use the trained XGBoost model to predict total new-line daily ridership and
+    peak-hour ridership.  Falls back to heuristic if model is unavailable.
+    """
+    feature_cols: list[str] = MODEL_META.get('feature_columns', [])
+
+    if RIDERSHIP_MODEL is None or not feature_cols:
+        return None, None  # caller will use heuristic
+
+    rows = []
+    for st in stations:
+        num_lines = 1  # new line adds at least 1 line to this stop
+        vec = build_feature_vector(st, num_lines)
+        if len(vec) != len(feature_cols):
+            return None, None
+        rows.append(vec)
+
+    X = np.array(rows, dtype=np.float32)
+    dmat = xgb.DMatrix(X, feature_names=feature_cols)
+    preds = RIDERSHIP_MODEL.predict(dmat)
+
+    if MODEL_META.get('log_target_daily', True):
+        preds = np.expm1(preds)
+
+    # New-line total ridership = sum of per-station predictions scaled by a
+    # transfer-uplift factor (new lines capture a share of existing demand +
+    # induced demand ~15 %).
+    total_daily = int(round(float(np.sum(preds)) * 1.15))
+
+    # Peak-hour fraction
+    if PEAK_FACTOR_MODEL is not None:
+        pf_preds = PEAK_FACTOR_MODEL.predict(dmat)
+        peak_factor = float(np.mean(pf_preds))
+    else:
+        peak_factor = float(MODEL_META.get('fallback_peak_factor', 0.10))
+
+    peak_hourly = int(round(total_daily * peak_factor))
+    return total_daily, peak_hourly
 
 
 def load_time_graph() -> nx.Graph | None:
@@ -250,24 +606,177 @@ def build_route_comparison(payload: SimulationRequest, route: list[StationInput]
     )
 
 
+def _predict_monthly_cost_ml_check(
+    *,
+    line_km: float,
+    stop_count: int,
+    monthly_ridership: float,
+    monthly_transfers_proxy: float,
+    target_tph: float,
+    train_service: Literal['local', 'express'],
+    monthly_formula: float,
+) -> int | None:
+    """Optional ML sanity check for cost (formula remains authoritative)."""
+    if COST_ML_MODEL is None or not COST_ML_FEATURE_COLS:
+        return None
+
+    feature_map: dict[str, float] = {
+        'line_length_km': float(line_km),
+        'station_count': float(stop_count),
+        'monthly_ridership': float(monthly_ridership),
+        'transfer_proxy': float(monthly_transfers_proxy),
+        'is_express': 1.0 if train_service == 'express' else 0.0,
+        'service_frequency_proxy': float(target_tph),
+        'route_complexity': float(line_km * stop_count),
+        # No real future lag values exist for a hypothetical line; anchor to formula baseline.
+        'target_lag_1': float(monthly_formula),
+        'target_lag_3_avg': float(monthly_formula),
+    }
+
+    row = [float(feature_map.get(col, 0.0)) for col in COST_ML_FEATURE_COLS]
+    try:
+        dmat = xgb.DMatrix(np.array([row], dtype=float), feature_names=COST_ML_FEATURE_COLS)
+        pred = float(COST_ML_MODEL.predict(dmat)[0])
+    except Exception:
+        return None
+
+    if not np.isfinite(pred):
+        return None
+    return int(round(max(0.0, pred)))
+
+
+def predict_operating_costs(
+    route: list[StationInput],
+    train_service: Literal['local', 'express'],
+    new_line_ridership: int,
+    peak_hour_ridership: int,
+) -> tuple[int, int]:
+    """
+    Estimate daily and monthly operating costs.
+
+    Primary path: calibrated formula from historical monthly cost labels.
+    Secondary guardrails: geometry/service adjustments and bounded fallback.
+    """
+    line_km = max(1.0, route_length_km(route))
+    stop_count = max(2, len(route))
+
+    # Convert predicted demand to monthly for formula features.
+    monthly_ridership = float(max(0, new_line_ridership)) * 30.4
+    transfer_ratio = float(SYSTEM_SERVICE_STATS.get('baseline_transfer_ratio', 0.10))
+    monthly_transfers_proxy = monthly_ridership * transfer_ratio
+
+    # Calibrated baseline (data-driven, interpretable)
+    b0 = float(COST_FORMULA_PARAMS.get('intercept', 250_000_000.0))
+    b1 = float(COST_FORMULA_PARAMS.get('coef_ridership', 3.5))
+    b2 = float(COST_FORMULA_PARAMS.get('coef_transfers_proxy', 1.2))
+    monthly_formula = b0 + b1 * monthly_ridership + b2 * monthly_transfers_proxy
+
+    # Service intensity from demand: higher peak demand implies higher frequency.
+    cap_per_train = 1100 if train_service == 'local' else 1300
+    target_tph = max(4.0, min(30.0, peak_hour_ridership / max(1, cap_per_train)))
+    service_multiplier = max(0.85, min(1.45, 1.0 + 0.018 * (target_tph - 8.0)))
+
+    # Geometry complexity factor: longer line and more stops imply higher cost.
+    geometry_baseline_km = 12.0
+    geometry_factor = max(0.70, min(1.35, 0.88 + 0.12 * (line_km / geometry_baseline_km)))
+    stop_factor = max(0.80, min(1.25, 0.90 + 0.02 * stop_count))
+
+    # Express corridors generally cost more per km due to service profile.
+    pattern_factor = 1.08 if train_service == 'express' else 1.0
+
+    monthly_adjusted = monthly_formula * service_multiplier * geometry_factor * stop_factor * pattern_factor
+
+    # Conservative fallback to avoid extreme outputs when calibration is unstable.
+    monthly_fallback = (line_km * 165000 + stop_count * 20000) * 30.4
+
+    # Blend toward calibrated formula while preserving robust behavior.
+    monthly = 0.80 * monthly_adjusted + 0.20 * monthly_fallback
+
+    # Secondary check: lightly nudge toward ML only when both estimates agree closely.
+    ml_monthly = _predict_monthly_cost_ml_check(
+        line_km=line_km,
+        stop_count=stop_count,
+        monthly_ridership=monthly_ridership,
+        monthly_transfers_proxy=monthly_transfers_proxy,
+        target_tph=target_tph,
+        train_service=train_service,
+        monthly_formula=monthly_formula,
+    )
+    if ml_monthly is not None:
+        ratio = ml_monthly / max(1.0, monthly)
+        if 0.70 <= ratio <= 1.30:
+            monthly = 0.90 * monthly + 0.10 * ml_monthly
+
+    monthly = int(round(max(20_000_000, monthly)))
+    daily = int(round(monthly / 30.4))
+    return daily, monthly
+
+
 def simulate(payload: SimulationRequest) -> SimulationResponse:
     drawn = payload.stations
     if len(drawn) < 2:
         raise HTTPException(status_code=400, detail='Need at least two stations.')
 
-    line_km = max(1.0, route_length_km(drawn))
     new_stop_count = sum(1 for station in drawn if station.is_new)
-
-    new_line_ridership = int(12000 + line_km * 7600 + new_stop_count * 1800)
-    peak_hour_ridership = int(new_line_ridership * 0.19)
-    operational_cost_daily = int(line_km * 165000 + len(drawn) * 20000)
     route_comparison = build_route_comparison(payload, drawn)
+
+    # Use the full predict module (geospatial feature extraction + time-graph redistribution)
+    if _PREDICT_AVAILABLE:
+        station_dicts = [
+            {'id': st.id, 'name': st.name, 'lat': st.lat, 'lon': st.lon, 'is_new': st.is_new}
+            for st in drawn
+        ]
+        pred = _predict_new_line(station_dicts)
+        operational_cost_daily, operational_cost_monthly = predict_operating_costs(
+            drawn,
+            payload.train_service,
+            int(pred['new_line_ridership']),
+            int(pred['peak_hour_ridership']),
+        )
+        return SimulationResponse(
+            new_line_ridership=pred['new_line_ridership'],
+            peak_hour_ridership=pred['peak_hour_ridership'],
+            operational_cost_daily=operational_cost_daily,
+            operational_cost_monthly=operational_cost_monthly,
+            affected_lines=[
+                AffectedLine(line=a['line'], delta_pct=a['delta_pct'])
+                for a in pred['affected_lines']
+            ],
+            affected_stations=[
+                AffectedStation(
+                    station_id=a['station_id'],
+                    name=a['name'],
+                    ridership_delta=a['ridership_delta'],
+                    ridership_delta_pct=a['ridership_delta_pct'],
+                )
+                for a in pred['affected_stations']
+            ],
+            route_comparison=route_comparison,
+        )
+
+    # Fallback: inline ML model (no geopandas, no time-graph redistribution)
+    ml_ridership, ml_peak = predict_ridership_ml(drawn)
+    if ml_ridership is not None:
+        new_line_ridership = ml_ridership
+        peak_hour_ridership = ml_peak
+    else:
+        line_km = max(1.0, route_length_km(drawn))
+        new_line_ridership = int(12000 + line_km * 7600 + new_stop_count * 1800)
+        peak_hour_ridership = int(new_line_ridership * 0.10)
+
+    operational_cost_daily, operational_cost_monthly = predict_operating_costs(
+        drawn,
+        payload.train_service,
+        new_line_ridership,
+        peak_hour_ridership,
+    )
 
     if not STATION_FEATURES:
         return SimulationResponse(
             new_line_ridership=new_line_ridership,
             peak_hour_ridership=peak_hour_ridership,
             operational_cost_daily=operational_cost_daily,
+            operational_cost_monthly=operational_cost_monthly,
             affected_lines=[],
             affected_stations=[],
             route_comparison=route_comparison,
@@ -280,16 +789,10 @@ def simulate(payload: SimulationRequest) -> SimulationResponse:
         score = proximity_score(station, drawn)
         if score <= 0:
             continue
-
         base = max(180, int(station.total_ridership * 0.04 * score))
         sign = signed_delta(station.station_complex_id, positive_station_ids)
         delta = base * sign
-
-        if station.total_ridership > 0:
-            delta_pct = (delta / station.total_ridership) * 100
-        else:
-            delta_pct = 0.0
-
+        delta_pct = (delta / station.total_ridership * 100) if station.total_ridership > 0 else 0.0
         candidates.append((station, delta, delta_pct))
 
     candidates.sort(key=lambda item: abs(item[1]), reverse=True)
@@ -298,6 +801,8 @@ def simulate(payload: SimulationRequest) -> SimulationResponse:
     line_delta_sum: dict[str, int] = {}
     for station, delta, _ in top:
         for line in station.lines:
+            if line not in VALID_ROUTE_IDS:
+                continue
             line_delta_sum[line] = line_delta_sum.get(line, 0) + delta
 
     affected_lines: list[AffectedLine] = []
@@ -305,7 +810,6 @@ def simulate(payload: SimulationRequest) -> SimulationResponse:
         baseline = LINE_TOTALS.get(line, max(1, new_line_ridership))
         delta_pct = (delta / baseline) * 100
         affected_lines.append(AffectedLine(line=line, delta_pct=round(delta_pct, 2)))
-
     affected_lines.sort(key=lambda item: abs(item.delta_pct), reverse=True)
 
     affected_stations = [
@@ -322,6 +826,7 @@ def simulate(payload: SimulationRequest) -> SimulationResponse:
         new_line_ridership=new_line_ridership,
         peak_hour_ridership=peak_hour_ridership,
         operational_cost_daily=operational_cost_daily,
+        operational_cost_monthly=operational_cost_monthly,
         affected_lines=affected_lines[:8],
         affected_stations=affected_stations,
         route_comparison=route_comparison,

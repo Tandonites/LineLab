@@ -31,6 +31,7 @@ export interface Prediction {
   new_line_ridership: number
   peak_hour_ridership: number
   operational_cost_daily: number
+  operational_cost_monthly: number
   affected_lines: { line: string; delta_pct: number }[]
   affected_stations: AffectedStation[]
   route_comparison: {
@@ -59,10 +60,11 @@ export interface AppState {
   error: string | null
   validationError: string | null
   trainService: TrainService
+  showAllStations: boolean
 }
 
 const SERVICE_RULES: Record<TrainService, { minMiles: number; maxMiles: number }> = {
-  local: { minMiles: 0.2, maxMiles: 0.5 },
+  local: { minMiles: 0.2, maxMiles: 0.75 },
   express: { minMiles: 0.5, maxMiles: 3 },
 }
 
@@ -102,6 +104,7 @@ function validateLineSpacing(
 }
 
 export default function App() {
+  const [mapVersion, setMapVersion] = useState(0)
   const [state, setState] = useState<AppState>({
     mode: 'draw',
     drawnLine: [],
@@ -111,6 +114,7 @@ export default function App() {
     error: null,
     validationError: null,
     trainService: 'local',
+    showAllStations: true,
   })
 
   const setMode = useCallback((mode: Mode) => {
@@ -127,8 +131,13 @@ export default function App() {
         error: validationError,
         prediction: null,
         mode: 'draw',
+        showAllStations: true,
       }
     })
+  }, [])
+
+  const setShowAllStations = useCallback((showAllStations: boolean) => {
+    setState(s => ({ ...s, showAllStations }))
   }, [])
 
   const addStation = useCallback((station: DrawnStation) => {
@@ -170,13 +179,16 @@ export default function App() {
   }, [])
 
   const clearAll = useCallback(() => {
+    setMapVersion(version => version + 1)
     setState(s => ({
       ...s,
       drawnLine: [],
+      newStationDraft: null,
       prediction: null,
       mode: 'draw',
       validationError: null,
       error: null,
+      showAllStations: true,
     }))
   }, [])
 
@@ -246,6 +258,7 @@ export default function App() {
         prediction,
         mode: 'results',
         validationError: null,
+        showAllStations: false,
       }))
     } catch {
       setState(s => ({
@@ -254,6 +267,7 @@ export default function App() {
         prediction: null,
         mode: 'draw',
         error: 'Prediction failed — backend unavailable or returned invalid data.',
+        showAllStations: true,
       }))
     }
   }, [state.drawnLine, state.trainService])
@@ -276,9 +290,12 @@ export default function App() {
       />
       <div className="flex-1 relative">
         <SubwayMap
+          key={mapVersion}
           drawnLine={state.drawnLine}
           prediction={state.prediction}
           trainService={state.trainService}
+          showAllStations={state.showAllStations}
+          onToggleAllStations={setShowAllStations}
           newStationDraft={state.newStationDraft}
           onStationClick={addStation}
           onMapRightClick={setNewStationDraft}
