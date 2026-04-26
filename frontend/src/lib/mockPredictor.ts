@@ -1,4 +1,4 @@
-import type { DrawnStation, Prediction } from '../App'
+import type { DrawnStation, Prediction, TrainService } from '../App'
 
 interface StationData {
   station_complex_id: string
@@ -12,8 +12,23 @@ interface StationData {
 
 const EARTH_RADIUS_KM = 6371
 const KM_TO_MILES = 0.621371
+const SERVICE_SPEED_MPH: Record<TrainService, number> = {
+  local: 18,
+  express: 28,
+}
 
 let stationsCache: StationData[] | null = null
+
+const TRANSFER_HUBS = [
+  'Times Sq-42 St',
+  '34 St-Herald Sq',
+  '14 St-Union Sq',
+  'Atlantic Av-Barclays Ctr',
+  'Fulton St',
+  'Jackson Hts-Roosevelt Av',
+  'Court Sq',
+  'Canal St',
+]
 
 function toRadians(value: number): number {
   return (value * Math.PI) / 180
@@ -90,8 +105,32 @@ async function loadStations(): Promise<StationData[]> {
   return data
 }
 
+function pickTransferStation(
+  stations: StationData[],
+  start: DrawnStation,
+  end: DrawnStation
+): StationData | null {
+  const startSet = new Set(start.lines)
+  const endSet = new Set(end.lines)
+
+  const hub = stations.find(station => {
+    const hasStartLine = station.lines.some(line => startSet.has(line))
+    const hasEndLine = station.lines.some(line => endSet.has(line))
+    return hasStartLine && hasEndLine && TRANSFER_HUBS.includes(station.name)
+  })
+
+  if (hub) return hub
+
+  return stations.find(station => {
+    const hasStartLine = station.lines.some(line => startSet.has(line))
+    const hasEndLine = station.lines.some(line => endSet.has(line))
+    return hasStartLine && hasEndLine
+  }) ?? null
+}
+
 export async function generateMockPrediction(
-  drawnLine: DrawnStation[]
+  drawnLine: DrawnStation[],
+  trainService: TrainService
 ): Promise<Prediction> {
   const stations = await loadStations()
   const routeKm = totalRouteKm(drawnLine)
@@ -124,11 +163,18 @@ export async function generateMockPrediction(
 
   const newLineRidership = Math.max(
     18000,
-    Math.round(routeDemand * 0.12 + routeKm * 1800 + drawnLine.length * 900)
+    Math.round(
+      routeDemand * (trainService === 'express' ? 0.16 : 0.12) +
+      routeKm * (trainService === 'express' ? 2100 : 1800) +
+      drawnLine.length * 900
+    )
   )
 
-  const peakHourRidership = Math.round(newLineRidership * 0.16)
-  const operationalCostDaily = Math.round(routeKm * 185000 + drawnLine.length * 22000)
+  const peakHourRidership = Math.round(newLineRidership * (trainService === 'express' ? 0.18 : 0.16))
+  const operationalCostDaily = Math.round(
+    routeKm * (trainService === 'express' ? 240000 : 185000) +
+    drawnLine.length * 22000
+  )
 
   const lineImpact = new Map<string, number>()
 
@@ -160,21 +206,66 @@ export async function generateMockPrediction(
     .sort((a, b) => Math.abs(b.delta_pct) - Math.abs(a.delta_pct))
     .slice(0, 6)
 
+  const start = drawnLine[0]
+  const end = drawnLine[drawnLine.length - 1]
+  let routeComparison: Prediction['route_comparison'] = null
+
+  if (start && end && !start.isNew && !end.isNew) {
+    const routeMiles = routeKm * KM_TO_MILES
+    const newRouteMinutes = Math.max(
+      7,
+      Math.round((routeMiles / SERVICE_SPEED_MPH[trainService]) * 60 + drawnLine.length * 1.2)
+    )
+
+    const sharedLine = start.lines.find(line => end.lines.includes(line))
+    const transferStation = sharedLine ? null : pickTransferStation(stations, start, end)
+    const firstTrain = sharedLine ?? start.lines[0] ?? 'subway'
+    const secondTrain = sharedLine
+      ? null
+      : transferStation?.lines.find(line => end.lines.includes(line)) ??
+        end.lines[0] ??
+        'subway'
+    const existingRouteLabel = sharedLine
+      ? `${sharedLine} train direct from ${start.name}`
+      : `${firstTrain} to ${transferStation?.name ?? 'transfer hub'}, then ${secondTrain}`
+
+    const existingRouteMinutes = sharedLine
+      ? Math.max(newRouteMinutes + 4, Math.round(routeMiles * 3.6 + 9))
+      : Math.max(newRouteMinutes + 9, Math.round(routeMiles * 4.4 + 14))
+
+    routeComparison = {
+      available: true,
+      existing_route_label: existingRouteLabel,
+      origin_name: start.name,
+      destination_name: end.name,
+      first_train: firstTrain,
+      transfer_station: transferStation?.name ?? null,
+      second_train: secondTrain,
+      existing_travel_minutes: existingRouteMinutes,
+      new_route_minutes: newRouteMinutes,
+      time_saved_minutes: Math.max(1, existingRouteMinutes - newRouteMinutes),
+    }
+  }
+
   return {
     new_line_ridership: newLineRidership,
     peak_hour_ridership: peakHourRidership,
     operational_cost_daily: operationalCostDaily,
     affected_lines: affectedLines,
     affected_stations: affectedStations,
+    route_comparison: routeComparison,
   }
 }
 
-export function describeMockRoute(line: DrawnStation[]): string {
+export function describeMockRoute(
+  line: DrawnStation[],
+  trainService: TrainService
+): string {
   if (line.length < 2) return 'Mock mode'
 
   const start = line[0].name
   const end = line[line.length - 1].name
   const routeMiles = totalRouteKm(line) * KM_TO_MILES
 
-  return `${start} to ${end} · ${routeMiles.toFixed(1)} mi mock scenario`
+  return `${trainService} · ${start} to ${end} · ${routeMiles.toFixed(1)} mi mock scenario`
 }
