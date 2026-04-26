@@ -1,4 +1,4 @@
-import { useRef } from 'react'
+import { useRef, type ChangeEvent } from 'react'
 import {
   DndContext,
   closestCenter,
@@ -283,7 +283,10 @@ interface Props {
   clearAll: () => void
   reorderLine: (newOrder: DrawnStation[]) => void
   predict: () => void
+  importJsonLine: (file: File) => void
+  exportJsonLine: () => void
   suggestCheaperLine: () => void
+  toggleSuggestedLineView: () => void
 }
 
 export default function LeftPanel({
@@ -295,10 +298,24 @@ export default function LeftPanel({
   clearAll,
   reorderLine,
   predict,
+  importJsonLine,
+  exportJsonLine,
   suggestCheaperLine,
+  toggleSuggestedLineView,
 }: Props) {
-  const { mode, drawnLine, loading, prediction, suggestionSummary, validationError, trainService } = state
+  const {
+    mode,
+    drawnLine,
+    loading,
+    prediction,
+    suggestionSummary,
+    validationError,
+    trainService,
+    suggestedLine,
+    showingSuggestedLine,
+  } = state
   const scrollRef = useRef<HTMLDivElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const sensors = useSensors(useSensor(PointerSensor))
 
   function handleDragEnd(event: DragEndEvent) {
@@ -313,6 +330,12 @@ export default function LeftPanel({
   const canPredict = drawnLine.length >= 2 && !loading && !validationError
   const kmTotal = totalKm(drawnLine)
   const ruleCopy = SERVICE_RULE_COPY[trainService]
+
+  function handleImportChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    if (file) importJsonLine(file)
+    event.target.value = ''
+  }
 
   return (
     <aside className="relative flex h-screen w-[430px] shrink-0 flex-col overflow-hidden border-r border-white/8 bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.12),transparent_28%),radial-gradient(circle_at_top_right,rgba(249,115,22,0.1),transparent_24%),linear-gradient(180deg,#0f1320_0%,#090c13_100%)]">
@@ -520,8 +543,39 @@ export default function LeftPanel({
             'Predict Impact'
           )}
         </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".json,application/json"
+          className="hidden"
+          onChange={handleImportChange}
+        />
         <button
-          onClick={suggestCheaperLine}
+          onClick={() => fileInputRef.current?.click()}
+          disabled={loading}
+          className={`mt-3 flex w-full items-center justify-center gap-2 rounded-2xl border px-4 py-3 text-sm font-semibold transition-all ${
+            loading
+              ? 'cursor-not-allowed border-slate-700/80 bg-slate-900/70 text-slate-500'
+              : 'border-cyan-300/24 bg-cyan-400/[0.08] text-cyan-100 hover:bg-cyan-400/[0.14]'
+          }`}
+        >
+          Import JSON Line
+        </button>
+        {prediction && (
+          <button
+            onClick={exportJsonLine}
+            disabled={loading}
+            className={`mt-3 flex w-full items-center justify-center gap-2 rounded-2xl border px-4 py-3 text-sm font-semibold transition-all ${
+              loading
+                ? 'cursor-not-allowed border-slate-700/80 bg-slate-900/70 text-slate-500'
+                : 'border-violet-300/24 bg-violet-400/[0.08] text-violet-100 hover:bg-violet-400/[0.14]'
+            }`}
+          >
+            Export JSON
+          </button>
+        )}
+        <button
+          onClick={suggestedLine ? toggleSuggestedLineView : suggestCheaperLine}
           disabled={!canPredict}
           className={`mt-3 flex w-full items-center justify-center gap-2 rounded-2xl border px-4 py-3 text-sm font-semibold transition-all ${
             canPredict
@@ -529,7 +583,11 @@ export default function LeftPanel({
               : 'cursor-not-allowed border-slate-700/80 bg-slate-900/70 text-slate-500'
           }`}
         >
-          Suggest Cheaper Line
+          {suggestedLine
+            ? showingSuggestedLine
+              ? 'Show Your Line'
+              : 'Show Suggested Line'
+            : 'Suggest Cheaper Line'}
         </button>
         {suggestionSummary && (
           <div className="mt-3 rounded-2xl border border-emerald-300/22 bg-emerald-500/[0.08] px-3 py-3">
