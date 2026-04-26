@@ -1,0 +1,7 @@
+borough,tract_count,population_total,commuters_total,median_income_median,area_sqkm_total,pop_density_weighted,commuter_ratio
+Bronx,361,1443229,564284,48475,0.0,0.0,0.391
+Brooklyn,805,2679620,1222797,75883,0.0,0.0,0.4563
+Manhattan,310,1645867,870794,112969,0.0,0.0,0.5291
+Queens,725,2360826,1112766,84981,0.0,0.0,0.4713
+Staten Island,126,492925,221119,99458,0.0,0.0,0.4486
+Unknown,6807,0,0,0,1222.856338,0.0,0.0
