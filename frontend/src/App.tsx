@@ -2,7 +2,6 @@ import { useState, useCallback } from 'react'
 import SubwayMap from './components/SubwayMap'
 import LeftPanel from './components/LeftPanel'
 import Toast from './components/Toast'
-import { describeMockRoute, generateMockPrediction } from './lib/mockPredictor'
 
 export interface DrawnStation {
   id: string
@@ -57,12 +56,9 @@ export interface AppState {
   loading: boolean
   prediction: Prediction | null
   error: string | null
-  mockSummary: string | null
   validationError: string | null
   trainService: TrainService
 }
-
-const USE_MOCK_PREDICTION = import.meta.env.VITE_USE_MOCK_PREDICTION !== 'false'
 
 const SERVICE_RULES: Record<TrainService, { minMiles: number; maxMiles: number }> = {
   local: { minMiles: 0.2, maxMiles: 0.5 },
@@ -112,7 +108,6 @@ export default function App() {
     loading: false,
     prediction: null,
     error: null,
-    mockSummary: null,
     validationError: null,
     trainService: 'local',
   })
@@ -131,7 +126,6 @@ export default function App() {
         error: validationError,
         prediction: null,
         mode: 'draw',
-        mockSummary: null,
       }
     })
   }, [])
@@ -176,7 +170,6 @@ export default function App() {
       drawnLine: [],
       prediction: null,
       mode: 'draw',
-      mockSummary: null,
       validationError: null,
     }))
   }, [])
@@ -239,22 +232,6 @@ export default function App() {
 
     setState(s => ({ ...s, loading: true, error: null }))
     try {
-      if (USE_MOCK_PREDICTION) {
-        const prediction = await generateMockPrediction(
-          state.drawnLine,
-          state.trainService
-        )
-        setState(s => ({
-          ...s,
-          loading: false,
-          prediction,
-          mode: 'results',
-          mockSummary: describeMockRoute(s.drawnLine, s.trainService),
-          validationError: null,
-        }))
-        return
-      }
-
       const res = await fetch('/api/simulate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -276,31 +253,16 @@ export default function App() {
         loading: false,
         prediction,
         mode: 'results',
-        mockSummary: null,
         validationError: null,
       }))
     } catch {
-      try {
-        const prediction = await generateMockPrediction(
-          state.drawnLine,
-          state.trainService
-        )
-        setState(s => ({
-          ...s,
-          loading: false,
-          prediction,
-          mode: 'results',
-          mockSummary: describeMockRoute(s.drawnLine, s.trainService),
-          error: 'Backend unavailable — showing mock simulation results.',
-          validationError: null,
-        }))
-      } catch {
-        setState(s => ({
-          ...s,
-          loading: false,
-          error: 'Prediction failed — mock data could not be generated.',
-        }))
-      }
+      setState(s => ({
+        ...s,
+        loading: false,
+        prediction: null,
+        mode: 'draw',
+        error: 'Prediction failed — backend unavailable or returned invalid data.',
+      }))
     }
   }, [state.drawnLine, state.trainService])
 
