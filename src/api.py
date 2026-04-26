@@ -68,6 +68,7 @@ class AffectedStation(BaseModel):
 
 class RouteComparison(BaseModel):
     available: bool
+    is_walking_only: bool
     existing_route_label: str
     origin_name: str
     destination_name: str
@@ -547,6 +548,68 @@ def load_time_graph() -> nx.Graph | None:
 
 TIME_GRAPH = load_time_graph()
 
+WALK_SPEED_MS = 1.4  # metres per second
+
+
+def _calculate_existing_trip(route: list[StationInput]) -> tuple[float, bool]:
+    """Replicate calculate_current_time logic using the already-loaded TIME_GRAPH.
+
+    Returns (best_time_seconds, is_walking_only).
+    Walking-only is True when there are no existing stations in the route, or
+    when straight-line walking is faster than the transit option.
+    """
+    start = route[0]
+    end = route[-1]
+
+    dist_km = haversine_km(start.lat, start.lon, end.lat, end.lon)
+    pure_walk_seconds = (dist_km * 1000.0) / WALK_SPEED_MS
+
+    if TIME_GRAPH is None:
+        return pure_walk_seconds, True
+
+    # Two-pointer: find first and last non-new stations
+    lo, hi = 0, len(route) - 1
+    while lo < len(route) and route[lo].is_new:
+        lo += 1
+    while hi >= 0 and route[hi].is_new:
+        hi -= 1
+
+    if lo > hi:
+        return pure_walk_seconds, True
+
+    existing_start = route[lo]
+    existing_end = route[hi]
+
+    # Walking time from new endpoints to nearest existing station in route
+    walk_seconds = 0.0
+    if start.is_new:
+        walk_seconds += haversine_km(start.lat, start.lon, existing_start.lat, existing_start.lon) * 1000.0 / WALK_SPEED_MS
+    if end.is_new:
+        walk_seconds += haversine_km(end.lat, end.lon, existing_end.lat, existing_end.lon) * 1000.0 / WALK_SPEED_MS
+
+    # Name-based node lookup (mirrors find_path.py approach)
+    src_nodes = [nid for nid, d in TIME_GRAPH.nodes(data=True)
+                 if existing_start.name in str(d.get('name', ''))]
+    dst_nodes = [nid for nid, d in TIME_GRAPH.nodes(data=True)
+                 if existing_end.name in str(d.get('name', ''))]
+
+    best_transit = float('inf')
+    for src in src_nodes:
+        for dst in dst_nodes:
+            try:
+                t = nx.dijkstra_path_length(TIME_GRAPH, src, dst, weight='weight')
+                if t < best_transit:
+                    best_transit = t
+            except (nx.NetworkXNoPath, nx.NodeNotFound):
+                continue
+
+    if best_transit == float('inf'):
+        return pure_walk_seconds, True
+
+    transit_total = best_transit + walk_seconds
+    is_walking_only = pure_walk_seconds < transit_total
+    return min(pure_walk_seconds, transit_total), is_walking_only
+
 
 def proximity_score(station: StationFeature, drawn: list[StationInput]) -> float:
     min_distance = min(
@@ -631,20 +694,41 @@ def build_route_comparison(payload: SimulationRequest, route: list[StationInput]
     origin_name = route[0].name
     destination_name = route[-1].name
     new_route_minutes = estimate_new_route_minutes(route, payload.train_service)
-    existing_minutes = estimate_existing_travel_minutes(route)
 
-    if existing_minutes is None:
+    existing_seconds, is_walking_only = _calculate_existing_trip(route)
+    existing_minutes_raw = existing_seconds / 60.0
+
+    # The time graph encodes pure in-motion seconds (no wait, no dwell, no
+    # platform walking).  A 1.6× factor brings it in line with real-world
+    # door-to-door trip times (headway + dwell + access).
+    # Walking-only times are not scaled because they already represent real
+    # elapsed wall-clock time at walking speed.
+    TRANSIT_REALISM_FACTOR = 1.6
+
+    # If the graph returned a real path, mark as available
+    all_new = all(st.is_new for st in route)
+    available = not all_new and not is_walking_only
+
+    if is_walking_only:
+        existing_minutes = int(round(existing_minutes_raw))
+        existing_label = 'Walking only (no faster transit route found)'
+        first_train = 'Walk'
+    else:
+        existing_minutes = int(round(existing_minutes_raw * TRANSIT_REALISM_FACTOR))
+        existing_label = 'Current network fastest route'
+        first_train = 'Current service'
+
+    # Fallback: if seconds came back as pure walk and it seems unreasonably low, use heuristic
+    if existing_minutes < 1:
         existing_minutes = int(round(new_route_minutes * 1.35 + 4))
         available = False
-        first_train = 'Current service'
+        is_walking_only = False
         existing_label = 'Estimated current network trip'
-    else:
-        available = True
         first_train = 'Current service'
-        existing_label = 'Current network fastest route'
 
     return RouteComparison(
         available=available,
+        is_walking_only=is_walking_only,
         existing_route_label=existing_label,
         origin_name=origin_name,
         destination_name=destination_name,

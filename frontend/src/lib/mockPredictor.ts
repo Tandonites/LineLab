@@ -163,6 +163,7 @@ export async function generateMockRouteComparison(
 
   return {
     available: true,
+    is_walking_only: false,
     existing_route_label: sharedLine
       ? `${sharedLine} train direct from ${start.name}`
       : `${firstTrain} to ${transferStation?.name ?? 'transfer hub'}, then ${secondTrain}`,
