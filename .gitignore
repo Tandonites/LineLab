@@ -10,7 +10,6 @@ __pycache__/
 .Python
 build/
 develop-eggs/
-dist/
 downloads/
 eggs/
 .eggs/
@@ -223,8 +222,6 @@ requirements.lock
 
 # Node / TypeScript / Vite
 frontend/node_modules/
-frontend/dist/
-frontend/dist-ssr/
 frontend/.vite/
 frontend/*.local
 node_modules/
