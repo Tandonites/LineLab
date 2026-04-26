@@ -270,7 +270,7 @@ export default function LeftPanel({
   reorderLine,
   predict,
 }: Props) {
-  const { mode, drawnLine, loading, prediction, mockSummary, validationError, trainService } = state
+  const { mode, drawnLine, loading, prediction, validationError, trainService } = state
   const scrollRef = useRef<HTMLDivElement>(null)
 
   const sensors = useSensors(useSensor(PointerSensor))

@@ -57,12 +57,9 @@ export interface AppState {
   loading: boolean
   prediction: Prediction | null
   error: string | null
-  mockSummary: string | null
   validationError: string | null
   trainService: TrainService
 }
-
-const USE_MOCK_PREDICTION = import.meta.env.VITE_USE_MOCK_PREDICTION !== 'false'
 
 const SERVICE_RULES: Record<TrainService, { minMiles: number; maxMiles: number }> = {
   local: { minMiles: 0.2, maxMiles: 0.5 },
@@ -112,7 +109,6 @@ export default function App() {
     loading: false,
     prediction: null,
     error: null,
-    mockSummary: null,
     validationError: null,
     trainService: 'local',
   })
@@ -131,7 +127,6 @@ export default function App() {
         error: validationError,
         prediction: null,
         mode: 'draw',
-        mockSummary: null,
       }
     })
   }, [])
@@ -176,7 +171,6 @@ export default function App() {
       drawnLine: [],
       prediction: null,
       mode: 'draw',
-      mockSummary: null,
       validationError: null,
     }))
   }, [])
@@ -276,8 +270,15 @@ export default function App() {
         loading: false,
         prediction,
         mode: 'results',
-        mockSummary: null,
         validationError: null,
+      }))
+    } catch {
+      setState(s => ({
+        ...s,
+        loading: false,
+        prediction: null,
+        mode: 'draw',
+        error: 'Prediction failed — backend unavailable or returned invalid data.',
       }))
     } catch {
       try {
