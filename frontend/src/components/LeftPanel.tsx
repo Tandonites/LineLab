@@ -189,22 +189,35 @@ function ResultsPanel({ prediction }: { prediction: Prediction }) {
           </div>
           <div className="grid gap-3 p-4 lg:grid-cols-2">
             <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-4">
-              <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Existing Fastest</p>
+              <div className="flex items-center gap-2">
+                <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Existing Fastest</p>
+                {prediction.route_comparison.is_walking_only && (
+                  <span className="rounded-full border border-amber-300/22 bg-amber-400/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-200">
+                    Walking only
+                  </span>
+                )}
+              </div>
               <div className="mt-3 space-y-2 text-sm leading-relaxed text-slate-200">
-                <p>
-                  Board the <span className="font-semibold text-cyan-300">{prediction.route_comparison.first_train}</span> train
-                </p>
-                {prediction.route_comparison.transfer_station && prediction.route_comparison.second_train ? (
+                {prediction.route_comparison.is_walking_only ? (
+                  <p className="text-amber-200">No faster transit option found — walking is the quickest current route.</p>
+                ) : (
                   <>
                     <p>
-                      Transfer at <span className="font-semibold text-white">{prediction.route_comparison.transfer_station}</span>
+                      Board the <span className="font-semibold text-cyan-300">{prediction.route_comparison.first_train}</span> train
                     </p>
-                    <p>
-                      Continue on the <span className="font-semibold text-cyan-300">{prediction.route_comparison.second_train}</span> train
-                    </p>
+                    {prediction.route_comparison.transfer_station && prediction.route_comparison.second_train ? (
+                      <>
+                        <p>
+                          Transfer at <span className="font-semibold text-white">{prediction.route_comparison.transfer_station}</span>
+                        </p>
+                        <p>
+                          Continue on the <span className="font-semibold text-cyan-300">{prediction.route_comparison.second_train}</span> train
+                        </p>
+                      </>
+                    ) : (
+                      <p className="text-emerald-300">Direct ride with no transfer.</p>
+                    )}
                   </>
-                ) : (
-                  <p className="text-emerald-300">Direct ride with no transfer.</p>
                 )}
               </div>
               <p className="mt-4 text-3xl font-semibold tracking-tight text-white">

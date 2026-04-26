@@ -36,6 +36,7 @@ export interface Prediction {
   affected_stations: AffectedStation[]
   route_comparison: {
     available: boolean
+    is_walking_only: boolean
     existing_route_label: string
     origin_name: string
     destination_name: string
