@@ -1,0 +1,176 @@
+{
+  "train_service": "express",
+  "stations": [
+    {
+      "id": "616",
+      "name": "74-Broadway",
+      "lat": 40.746643,
+      "lon": -73.891335,
+      "is_new": false,
+      "lines": [
+        "7"
+      ]
+    },
+    {
+      "id": "new_0",
+      "name": "Grand Ave",
+      "lat": 40.7306247381153,
+      "lon": -73.88627529144289,
+      "is_new": true,
+      "lines": []
+    },
+    {
+      "id": "new_1",
+      "name": "Elliot Ave",
+      "lat": 40.7202010588415,
+      "lon": -73.88305664062501,
+      "is_new": true,
+      "lines": []
+    },
+    {
+      "id": "108",
+      "name": "Middle Village-Metropolitan Av",
+      "lat": 40.711395,
+      "lon": -73.8896,
+      "is_new": false,
+      "lines": [
+        "M"
+      ]
+    },
+    {
+      "id": "new_2",
+      "name": "Myrtle Ave",
+      "lat": 40.699641625343126,
+      "lon": -73.88957977294923,
+      "is_new": true,
+      "lines": []
+    },
+    {
+      "id": "130",
+      "name": "Wilson Av",
+      "lat": 40.688763,
+      "lon": -73.904045,
+      "is_new": false,
+      "lines": [
+        "L"
+      ]
+    },
+    {
+      "id": "133",
+      "name": "Atlantic Av",
+      "lat": 40.675346,
+      "lon": -73.9031,
+      "is_new": false,
+      "lines": [
+        "L"
+      ]
+    },
+    {
+      "id": "135",
+      "name": "Livonia Av",
+      "lat": 40.66404,
+      "lon": -73.90057,
+      "is_new": false,
+      "lines": [
+        "L"
+      ]
+    },
+    {
+      "id": "137",
+      "name": "East 105 St",
+      "lat": 40.650574,
+      "lon": -73.89948,
+      "is_new": false,
+      "lines": [
+        "L"
+      ]
+    },
+    {
+      "id": "new_3",
+      "name": "Remsen Avenue",
+      "lat": 40.642028420083335,
+      "lon": -73.91215324401857,
+      "is_new": true,
+      "lines": []
+    },
+    {
+      "id": "new_4",
+      "name": "Utica Ave",
+      "lat": 40.63421262788651,
+      "lon": -73.93249511718751,
+      "is_new": true,
+      "lines": []
+    },
+    {
+      "id": "359",
+      "name": "Flatbush Av-Brooklyn College",
+      "lat": 40.632835,
+      "lon": -73.94764,
+      "is_new": false,
+      "lines": [
+        "2",
+        "5"
+      ]
+    },
+    {
+      "id": "47",
+      "name": "Newkirk Plaza",
+      "lat": 40.635082,
+      "lon": -73.96279,
+      "is_new": false,
+      "lines": [
+        "B",
+        "Q"
+      ]
+    },
+    {
+      "id": "245",
+      "name": "18 Av",
+      "lat": 40.629753,
+      "lon": -73.976974,
+      "is_new": false,
+      "lines": [
+        "F"
+      ]
+    },
+    {
+      "id": "615",
+      "name": "New Utrecht Av",
+      "lat": 40.626472,
+      "lon": -73.99635,
+      "is_new": false,
+      "lines": [
+        "N"
+      ]
+    },
+    {
+      "id": "71",
+      "name": "8 Av",
+      "lat": 40.635063,
+      "lon": -74.01172,
+      "is_new": false,
+      "lines": [
+        "N"
+      ]
+    },
+    {
+      "id": "35",
+      "name": "59 St",
+      "lat": 40.64136,
+      "lon": -74.01788,
+      "is_new": false,
+      "lines": [
+        "N",
+        "R"
+      ]
+    },
+    {
+      "id": "new_5",
+      "name": "Brooklyn Terminal",
+      "lat": 40.64886648762003,
+      "lon": -74.02193069458009,
+      "is_new": true,
+      "lines": []
+    }
+  ]
+}
