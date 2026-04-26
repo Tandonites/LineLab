@@ -1,0 +1,18 @@
+{
+  "inputs": {
+    "geojson": "raw/census_tracts.geojson",
+    "csv": "raw/census_population.csv",
+    "geojson_rows": 6807,
+    "csv_rows": 2327
+  },
+  "quality": {
+    "missing_geoid_in_geojson": 0,
+    "output_tract_rows": 9134,
+    "output_borough_rows": 6
+  },
+  "totals": {
+    "population_total": 8622467,
+    "commuters_total": 3991760,
+    "area_sqkm_total": 1222.8563
+  }
+}
