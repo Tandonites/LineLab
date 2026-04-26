@@ -66,7 +66,7 @@ COLUMN_ALIASES = {
     "transfers": ["transfers"],
     "lat": ["latitude", "lat"],
     "lon": ["longitude", "lon", "lng"],
-    "route": ["route_id", "route", "line", "route_short_name", "routes"],
+    "route": ["bus_route", "route_id", "route", "line", "route_short_name", "routes"],
     "trip_id": ["trip_id", "trip"],
     "direction": ["direction_id", "direction"],
     "stop_sequence": ["stop_sequence", "sequence", "seq"],
@@ -174,7 +174,6 @@ def parse(input_path: str, max_rows: int, skip_hourly: bool, output_dir: str):
     os.makedirs(output_dir, exist_ok=True)
 
     stops = {}
-    hourly_records = []
     daily = defaultdict(lambda: {"ridership": 0, "transfers": 0, "count": 0})
     route_stats = defaultdict(lambda: {"ridership": 0, "transfers": 0, "stops": set()})
     hourly_pattern = defaultdict(int)
@@ -191,6 +190,18 @@ def parse(input_path: str, max_rows: int, skip_hourly: bool, output_dir: str):
     row_count = 0
     skipped = 0
     missing_required = 0
+
+    # Open hourly CSV for streaming writes to avoid OOM on large datasets.
+    hourly_path = os.path.join(output_dir, "bus_ridership_hourly.csv")
+    _hourly_file = None
+    _hourly_writer = None
+    _hourly_count = 0
+    _HOURLY_FIELDS = [
+        "timestamp", "hour", "day_of_week", "is_weekend",
+        "stop_id", "stop_name", "route", "route_group", "routes",
+        "borough", "payment", "fare_class", "ridership", "transfers",
+        "lat", "lon",
+    ]
 
     with open(input_path, newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
@@ -210,13 +221,18 @@ def parse(input_path: str, max_rows: int, skip_hourly: bool, output_dir: str):
                     # If transit_mode exists and is not bus, ignore row.
                     continue
 
-                stop_id = pick(row, "stop_id")
-                stop_name = pick(row, "stop_name")
-                lat = to_float(pick(row, "lat"), default=float("nan"))
-                lon = to_float(pick(row, "lon"), default=float("nan"))
-                if not stop_id or not stop_name or lat != lat or lon != lon:
+                route_raw = pick(row, "route")
+                if not route_raw:
                     missing_required += 1
                     continue
+
+                stop_id = pick(row, "stop_id") or route_raw
+                stop_name = pick(row, "stop_name") or route_raw
+                lat_raw = pick(row, "lat")
+                lon_raw = pick(row, "lon")
+                lat = to_float(lat_raw) if lat_raw else float("nan")
+                lon = to_float(lon_raw) if lon_raw else float("nan")
+                has_coords = (lat == lat and lon == lon)  # nan-check
 
                 borough = pick(row, "borough")
                 payment = pick(row, "payment")
@@ -224,7 +240,6 @@ def parse(input_path: str, max_rows: int, skip_hourly: bool, output_dir: str):
                 ridership = to_int(pick(row, "ridership"), default=0)
                 transfers = to_int(pick(row, "transfers"), default=0)
 
-                route_raw = pick(row, "route")
                 routes = parse_routes(route_raw, stop_name)
                 main_route = routes[0] if routes else "UNKNOWN"
 
@@ -239,8 +254,8 @@ def parse(input_path: str, max_rows: int, skip_hourly: bool, output_dir: str):
                         name=stop_name,
                         routes=routes,
                         borough=borough,
-                        lat=lat,
-                        lon=lon,
+                        lat=lat if has_coords else 0.0,
+                        lon=lon if has_coords else 0.0,
                     )
                 s = stops[stop_id]
 
@@ -271,7 +286,11 @@ def parse(input_path: str, max_rows: int, skip_hourly: bool, output_dir: str):
                 hourly_pattern[(grp, hour, dow)] += ridership
 
                 if not skip_hourly:
-                    hourly_records.append({
+                    if _hourly_writer is None:
+                        _hourly_file = open(hourly_path, "w", newline="", encoding="utf-8")
+                        _hourly_writer = csv.DictWriter(_hourly_file, fieldnames=_HOURLY_FIELDS)
+                        _hourly_writer.writeheader()
+                    _hourly_writer.writerow({
                         "timestamp": ts.isoformat(),
                         "hour": hour,
                         "day_of_week": dow,
@@ -286,9 +305,10 @@ def parse(input_path: str, max_rows: int, skip_hourly: bool, output_dir: str):
                         "fare_class": fare_class,
                         "ridership": ridership,
                         "transfers": transfers,
-                        "lat": lat,
-                        "lon": lon,
+                        "lat": lat if has_coords else "",
+                        "lon": lon if has_coords else "",
                     })
+                    _hourly_count += 1
 
                 trip_id = pick(row, "trip_id")
                 seq_raw = pick(row, "stop_sequence")
@@ -305,8 +325,11 @@ def parse(input_path: str, max_rows: int, skip_hourly: bool, output_dir: str):
             except (ValueError, KeyError):
                 skipped += 1
 
+    if _hourly_file is not None:
+        _hourly_file.close()
+
     print(f"\nDone. Parsed: {row_count:,} | Skipped: {skipped:,}")
-    print(f"Missing required stop fields: {missing_required:,}")
+    print(f"Missing required fields (no route): {missing_required:,}")
     print(f"Unique stops: {len(stops):,} | Unique routes: {len(route_stats):,}")
 
     # 1) bus_stops.json
@@ -314,6 +337,7 @@ def parse(input_path: str, max_rows: int, skip_hourly: bool, output_dir: str):
     for s in stops.values():
         d = asdict(s)
         d["avg_ridership_per_hour"] = round(s.total_ridership / max(s.record_count, 1), 2)
+        d["has_coords"] = (s.lat != 0.0 or s.lon != 0.0)
         stop_list.append(d)
     stop_list.sort(key=lambda x: x["total_ridership"], reverse=True)
     out = os.path.join(output_dir, "bus_stops.json")
@@ -374,6 +398,7 @@ def parse(input_path: str, max_rows: int, skip_hourly: bool, output_dir: str):
             "ridership": s.total_ridership,
         }
         for s in stops.values()
+        if s.lat != 0.0 or s.lon != 0.0
     ]
 
     edges = []
@@ -403,7 +428,7 @@ def parse(input_path: str, max_rows: int, skip_hourly: bool, output_dir: str):
         route_points = []
         for sid in stop_ids:
             s = stops.get(sid)
-            if s:
+            if s and (s.lat != 0.0 or s.lon != 0.0):
                 route_points.append((sid, s.lat, s.lon))
 
         if len(route_points) < 2:
@@ -434,14 +459,9 @@ def parse(input_path: str, max_rows: int, skip_hourly: bool, output_dir: str):
         json.dump({"nodes": nodes, "edges": edges}, f, indent=2)
     print(f"[5] bus_network_graph.json  -> {out}")
 
-    # 6) bus_ridership_hourly.csv (optional)
-    if not skip_hourly and hourly_records:
-        out = os.path.join(output_dir, "bus_ridership_hourly.csv")
-        with open(out, "w", newline="", encoding="utf-8") as f:
-            w = csv.DictWriter(f, fieldnames=hourly_records[0].keys())
-            w.writeheader()
-            w.writerows(hourly_records)
-        print(f"[6] bus_ridership_hourly.csv -> {out}  ({len(hourly_records):,} rows)")
+    # 6) bus_ridership_hourly.csv - already streamed to disk during parsing
+    if not skip_hourly and _hourly_count > 0:
+        print(f"[6] bus_ridership_hourly.csv -> {hourly_path}  ({_hourly_count:,} rows)")
 
     print(f"\nAll outputs in: {output_dir}/")
 
