@@ -699,11 +699,11 @@ def build_route_comparison(payload: SimulationRequest, route: list[StationInput]
     existing_minutes_raw = existing_seconds / 60.0
 
     # The time graph encodes pure in-motion seconds (no wait, no dwell, no
-    # platform walking).  A 1.6× factor brings it in line with real-world
+    # platform walking).  A 1.3× factor brings it in line with real-world
     # door-to-door trip times (headway + dwell + access).
     # Walking-only times are not scaled because they already represent real
     # elapsed wall-clock time at walking speed.
-    TRANSIT_REALISM_FACTOR = 1.6
+    TRANSIT_REALISM_FACTOR = 1.3
 
     # If the graph returned a real path, mark as available
     all_new = all(st.is_new for st in route)
