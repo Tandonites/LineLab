@@ -17,7 +17,7 @@ pydantic>=2.6.0
 
 # --- Machine learning ---
 scikit-learn>=1.4.0
-xgboost>=2.0.0             # ridership + cost regression
+xgboost>=2.0.0             # ridership, cost, time regression
 lightgbm>=4.3.0
 
 # --- Geospatial / transit network ---
