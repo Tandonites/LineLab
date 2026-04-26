@@ -13,7 +13,7 @@ except ImportError:
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 TRAINING_DATA_PATH = ROOT_DIR / "data" / "processed" / "time_training_data.csv"
-EXPRESS_MULTIPLIER = 1.25  # express trains are 1.25x faster than local
+EXPRESS_MULTIPLIER = 1.05  # express trains are 1.25x faster than local
 MODEL_PATH = ROOT_DIR / "data" / "models" / "time_model.joblib"
 
 # compute mean speed dynamically from training data as default for new stations
