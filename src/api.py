@@ -7,7 +7,19 @@ import csv
 import json
 
 import networkx as nx
+import numpy as np
+import xgboost as xgb
 from fastapi import FastAPI, HTTPException
+try:
+    from predict import predict_new_line as _predict_new_line
+    _PREDICT_AVAILABLE = True
+except Exception:
+    try:
+        from src.predict import predict_new_line as _predict_new_line
+        _PREDICT_AVAILABLE = True
+    except Exception:
+        _PREDICT_AVAILABLE = False
+        _predict_new_line = None
 from fastapi.middleware.cors import CORSMiddleware
 from networkx.readwrite import json_graph
 from pydantic import BaseModel, Field
@@ -17,6 +29,8 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 STATIONS_PATH = ROOT_DIR / 'data' / 'processed' / 'stations.json'
 LINE_SUMMARY_PATH = ROOT_DIR / 'data' / 'processed' / 'line_summary.csv'
 TIME_GRAPH_PATH = ROOT_DIR / 'data' / 'processed' / 'mta_time_graph.json'
+MODELS_DIR = ROOT_DIR / 'data' / 'models'
+STATION_FEATURES_CSV = ROOT_DIR / 'data' / 'raw' / 'station_features.csv'
 
 
 class StationInput(BaseModel):
@@ -147,6 +161,195 @@ STATION_FEATURES = load_station_features()
 LINE_TOTALS = load_line_totals()
 
 
+# ── ML model loading ──────────────────────────────────────────────────────────
+
+def load_ml_models() -> tuple[xgb.Booster | None, xgb.Booster | None, dict]:
+    meta: dict = {
+        'feature_columns': [],
+        'log_target_daily': True,
+        'log_target_peak': False,
+        'fallback_peak_factor': 0.10,
+    }
+    rid_model: xgb.Booster | None = None
+    pf_model: xgb.Booster | None = None
+
+    feat_path = MODELS_DIR / 'feature_columns.json'
+    if feat_path.exists():
+        try:
+            meta = json.loads(feat_path.read_text(encoding='utf-8'))
+        except (ValueError, KeyError):
+            pass
+
+    rid_path = MODELS_DIR / 'ridership_model.json'
+    if rid_path.exists():
+        try:
+            m = xgb.Booster()
+            m.load_model(str(rid_path))
+            rid_model = m
+        except Exception:
+            rid_model = None
+
+    pf_path = MODELS_DIR / 'peak_factor_model.json'
+    if pf_path.exists():
+        try:
+            m = xgb.Booster()
+            m.load_model(str(pf_path))
+            pf_model = m
+        except Exception:
+            pf_model = None
+
+    return rid_model, pf_model, meta
+
+
+def load_station_feature_lookup() -> dict[str, dict]:
+    """Load station_features.csv into {station_complex_id: row_dict}."""
+    lookup: dict[str, dict] = {}
+    if not STATION_FEATURES_CSV.exists():
+        return lookup
+    with STATION_FEATURES_CSV.open(newline='', encoding='utf-8') as fh:
+        for row in csv.DictReader(fh):
+            sid = str(row.get('station_complex_id', '')).strip()
+            if sid:
+                lookup[sid] = row
+    return lookup
+
+
+RIDERSHIP_MODEL, PEAK_FACTOR_MODEL, MODEL_META = load_ml_models()
+STATION_FEATURE_LOOKUP = load_station_feature_lookup()
+
+BOROUGH_COLS = ['boro_Bronx', 'boro_Brooklyn', 'boro_Manhattan', 'boro_Queens', 'boro_Staten Island']
+BOROUGH_MAP = {
+    'bronx': 'boro_Bronx',
+    'brooklyn': 'boro_Brooklyn',
+    'manhattan': 'boro_Manhattan',
+    'queens': 'boro_Queens',
+    'staten island': 'boro_Staten Island',
+    'staten': 'boro_Staten Island',
+}
+
+
+def _row_to_vec(row: dict, lat: float, lon: float, num_lines: int) -> dict[str, float]:
+    """Convert a station_features row into the flat feature dict the model expects."""
+
+    def flt(key: float, default: float = 0.0) -> float:
+        try:
+            v = row.get(key, default)
+            return float(v) if v not in (None, '', 'nan') else default
+        except (ValueError, TypeError):
+            return default
+
+    boro_raw = str(row.get('borough', '')).strip().lower()
+    features: dict[str, float] = {
+        'num_lines': float(num_lines),
+        'lat': lat,
+        'lon': lon,
+        'pop_density_tract': flt('pop_density_tract'),
+        'population_500m': flt('population_500m'),
+        'median_income': flt('median_income'),
+        'commuters_tract': flt('commuters_tract'),
+        'bus_stops_250m': flt('bus_stops_250m'),
+        'bus_stops_500m': flt('bus_stops_500m'),
+    }
+    for col in BOROUGH_COLS:
+        features[col] = 0.0
+    mapped = BOROUGH_MAP.get(boro_raw)
+    if mapped:
+        features[mapped] = 1.0
+    return features
+
+
+def _interpolate_features(lat: float, lon: float, num_lines: int) -> dict[str, float]:
+    """For new stations with no lookup entry, interpolate from 3 nearest known stations."""
+    if not STATION_FEATURE_LOOKUP:
+        return {c: 0.0 for c in (['num_lines', 'lat', 'lon', 'pop_density_tract',
+                                   'population_500m', 'median_income', 'commuters_tract',
+                                   'bus_stops_250m', 'bus_stops_500m'] + BOROUGH_COLS)}
+
+    neighbours = sorted(
+        STATION_FEATURE_LOOKUP.values(),
+        key=lambda r: haversine_km(lat, lon, float(r.get('lat') or 0), float(r.get('lon') or 0)),
+    )[:3]
+
+    merged: dict[str, float] = {}
+    for key in ('pop_density_tract', 'population_500m', 'median_income',
+                'commuters_tract', 'bus_stops_250m', 'bus_stops_500m'):
+        vals = []
+        for r in neighbours:
+            try:
+                v = float(r.get(key) or 0)
+                vals.append(v)
+            except (ValueError, TypeError):
+                pass
+        merged[key] = float(np.mean(vals)) if vals else 0.0
+
+    # Pick majority borough from neighbours
+    boro_counts: dict[str, int] = {}
+    for r in neighbours:
+        b = str(r.get('borough', '')).strip()
+        boro_counts[b] = boro_counts.get(b, 0) + 1
+    dominant_boro = max(boro_counts, key=boro_counts.get) if boro_counts else ''
+
+    merged['borough'] = dominant_boro
+    vec = _row_to_vec(merged, lat, lon, num_lines)
+    return vec
+
+
+def build_feature_vector(station: 'StationInput', num_lines: int) -> list[float]:
+    """Build the ordered feature vector for one station."""
+    feature_cols: list[str] = MODEL_META.get('feature_columns', [])
+    if not feature_cols:
+        return []
+
+    row = STATION_FEATURE_LOOKUP.get(station.id)
+    if row is not None:
+        feat = _row_to_vec(row, station.lat, station.lon, num_lines)
+    else:
+        feat = _interpolate_features(station.lat, station.lon, num_lines)
+
+    return [feat.get(col, 0.0) for col in feature_cols]
+
+
+def predict_ridership_ml(stations: list['StationInput']) -> tuple[int, int]:
+    """
+    Use the trained XGBoost model to predict total new-line daily ridership and
+    peak-hour ridership.  Falls back to heuristic if model is unavailable.
+    """
+    feature_cols: list[str] = MODEL_META.get('feature_columns', [])
+
+    if RIDERSHIP_MODEL is None or not feature_cols:
+        return None, None  # caller will use heuristic
+
+    rows = []
+    for st in stations:
+        num_lines = 1  # new line adds at least 1 line to this stop
+        vec = build_feature_vector(st, num_lines)
+        if len(vec) != len(feature_cols):
+            return None, None
+        rows.append(vec)
+
+    X = np.array(rows, dtype=np.float32)
+    dmat = xgb.DMatrix(X, feature_names=feature_cols)
+    preds = RIDERSHIP_MODEL.predict(dmat)
+
+    if MODEL_META.get('log_target_daily', True):
+        preds = np.expm1(preds)
+
+    # New-line total ridership = sum of per-station predictions scaled by a
+    # transfer-uplift factor (new lines capture a share of existing demand +
+    # induced demand ~15 %).
+    total_daily = int(round(float(np.sum(preds)) * 1.15))
+
+    # Peak-hour fraction
+    if PEAK_FACTOR_MODEL is not None:
+        pf_preds = PEAK_FACTOR_MODEL.predict(dmat)
+        peak_factor = float(np.mean(pf_preds))
+    else:
+        peak_factor = float(MODEL_META.get('fallback_peak_factor', 0.10))
+
+    peak_hourly = int(round(total_daily * peak_factor))
+    return total_daily, peak_hourly
+
+
 def load_time_graph() -> nx.Graph | None:
     if not TIME_GRAPH_PATH.exists():
         return None
@@ -257,11 +460,44 @@ def simulate(payload: SimulationRequest) -> SimulationResponse:
 
     line_km = max(1.0, route_length_km(drawn))
     new_stop_count = sum(1 for station in drawn if station.is_new)
-
-    new_line_ridership = int(12000 + line_km * 7600 + new_stop_count * 1800)
-    peak_hour_ridership = int(new_line_ridership * 0.19)
     operational_cost_daily = int(line_km * 165000 + len(drawn) * 20000)
     route_comparison = build_route_comparison(payload, drawn)
+
+    # Use the full predict module (geospatial feature extraction + time-graph redistribution)
+    if _PREDICT_AVAILABLE:
+        station_dicts = [
+            {'id': st.id, 'name': st.name, 'lat': st.lat, 'lon': st.lon, 'is_new': st.is_new}
+            for st in drawn
+        ]
+        pred = _predict_new_line(station_dicts)
+        return SimulationResponse(
+            new_line_ridership=pred['new_line_ridership'],
+            peak_hour_ridership=pred['peak_hour_ridership'],
+            operational_cost_daily=operational_cost_daily,
+            affected_lines=[
+                AffectedLine(line=a['line'], delta_pct=a['delta_pct'])
+                for a in pred['affected_lines']
+            ],
+            affected_stations=[
+                AffectedStation(
+                    station_id=a['station_id'],
+                    name=a['name'],
+                    ridership_delta=a['ridership_delta'],
+                    ridership_delta_pct=a['ridership_delta_pct'],
+                )
+                for a in pred['affected_stations']
+            ],
+            route_comparison=route_comparison,
+        )
+
+    # Fallback: inline ML model (no geopandas, no time-graph redistribution)
+    ml_ridership, ml_peak = predict_ridership_ml(drawn)
+    if ml_ridership is not None:
+        new_line_ridership = ml_ridership
+        peak_hour_ridership = ml_peak
+    else:
+        new_line_ridership = int(12000 + line_km * 7600 + new_stop_count * 1800)
+        peak_hour_ridership = int(new_line_ridership * 0.10)
 
     if not STATION_FEATURES:
         return SimulationResponse(
@@ -280,16 +516,10 @@ def simulate(payload: SimulationRequest) -> SimulationResponse:
         score = proximity_score(station, drawn)
         if score <= 0:
             continue
-
         base = max(180, int(station.total_ridership * 0.04 * score))
         sign = signed_delta(station.station_complex_id, positive_station_ids)
         delta = base * sign
-
-        if station.total_ridership > 0:
-            delta_pct = (delta / station.total_ridership) * 100
-        else:
-            delta_pct = 0.0
-
+        delta_pct = (delta / station.total_ridership * 100) if station.total_ridership > 0 else 0.0
         candidates.append((station, delta, delta_pct))
 
     candidates.sort(key=lambda item: abs(item[1]), reverse=True)
@@ -305,7 +535,6 @@ def simulate(payload: SimulationRequest) -> SimulationResponse:
         baseline = LINE_TOTALS.get(line, max(1, new_line_ridership))
         delta_pct = (delta / baseline) * 100
         affected_lines.append(AffectedLine(line=line, delta_pct=round(delta_pct, 2)))
-
     affected_lines.sort(key=lambda item: abs(item.delta_pct), reverse=True)
 
     affected_stations = [
