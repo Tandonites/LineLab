@@ -76,8 +76,8 @@ const NYC_MAX_BOUNDS = L.latLngBounds(
   [40.92, -73.68]
 )
 const NYC_VIEW_BOUNDS = L.latLngBounds(
-  [40.61, -74.03],
-  [40.86, -73.82]
+  [40.54, -74.15],
+  [40.92, -73.68]
 )
 const RESULT_HEAT_PANE = 'result-heat-pane'
 const RESULT_BUBBLE_PANE = 'result-bubble-pane'
