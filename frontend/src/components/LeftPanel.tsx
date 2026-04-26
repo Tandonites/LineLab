@@ -174,13 +174,18 @@ function ResultsPanel({ prediction }: { prediction: Prediction }) {
         />
       </div>
 
-      {prediction.route_comparison?.available && (
+      {prediction.route_comparison && (
         <div className="overflow-hidden rounded-[1.45rem] border border-white/8 bg-[linear-gradient(180deg,rgba(19,22,35,0.98),rgba(11,14,23,0.98))] shadow-[0_20px_42px_rgba(0,0,0,0.28)]">
           <div className="border-b border-white/8 px-4 py-3">
             <p className="text-[11px] uppercase tracking-[0.22em] text-slate-500">Travel Time Comparison</p>
             <h4 className="mt-1 text-base font-semibold text-white">
               {prediction.route_comparison.origin_name} to {prediction.route_comparison.destination_name}
             </h4>
+            {!prediction.route_comparison.available && (
+              <p className="mt-1 text-xs text-amber-200">
+                Existing-network timing is estimated. Proposed corridor timing is predicted for this route.
+              </p>
+            )}
           </div>
           <div className="grid gap-3 p-4 lg:grid-cols-2">
             <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-4">
@@ -216,9 +221,15 @@ function ResultsPanel({ prediction }: { prediction: Prediction }) {
               <p className="mt-4 text-3xl font-semibold tracking-tight text-white">
                 {prediction.route_comparison.new_route_minutes} min
               </p>
-              <div className="mt-3 inline-flex rounded-full border border-emerald-300/18 bg-emerald-400/10 px-3 py-1 text-[11px] font-semibold text-emerald-200">
-                Saves about {prediction.route_comparison.time_saved_minutes} minutes
-              </div>
+              {prediction.route_comparison.time_saved_minutes > 0 ? (
+                <div className="mt-3 inline-flex rounded-full border border-emerald-300/18 bg-emerald-400/10 px-3 py-1 text-[11px] font-semibold text-emerald-200">
+                  Saves about {prediction.route_comparison.time_saved_minutes} minutes
+                </div>
+              ) : (
+                <div className="mt-3 inline-flex rounded-full border border-slate-300/18 bg-slate-400/10 px-3 py-1 text-[11px] font-semibold text-slate-200">
+                  Similar travel time to current network
+                </div>
+              )}
             </div>
           </div>
         </div>
