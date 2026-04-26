@@ -49,8 +49,8 @@ setup-fe: fe-install  ## scaffold TS frontend (vite + react + leaflet)
 		$(NPM) create vite@latest $(FRONTEND_DIR) -- --template react-ts; \
 		cd $(FRONTEND_DIR) && $(NPM) install && \
 		$(NPM) install leaflet react-leaflet @types/leaflet \
-			leaflet-draw @types/leaflet-draw react-leaflet-draw \
-			axios recharts; \
+			@dnd-kit/core @dnd-kit/sortable @dnd-kit/utilities \
+			tailwindcss @tailwindcss/vite; \
 	fi
 
 # Install frontend deps when package.json is newer than the stamp
