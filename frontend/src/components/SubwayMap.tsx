@@ -71,6 +71,12 @@ interface Props {
 
 const NYC_CENTER: [number, number] = [40.7128, -73.906]
 const NYC_ZOOM = 12
+const RESULT_HEAT_PANE = 'result-heat-pane'
+const RESULT_BUBBLE_PANE = 'result-bubble-pane'
+
+function impactColor(delta: number): string {
+  return delta >= 0 ? '#10b981' : '#ef4444'
+}
 
 export default function SubwayMap({
   drawnLine,
@@ -86,7 +92,8 @@ export default function SubwayMap({
   const stationMarkersRef = useRef<Map<string, L.CircleMarker>>(new Map())
   const drawnPolylineRef = useRef<L.Polyline | null>(null)
   const newStationMarkersRef = useRef<L.Marker[]>([])
-  const resultHalosRef = useRef<L.CircleMarker[]>([])
+  const resultHeatRef = useRef<L.Circle[]>([])
+  const resultBubblesRef = useRef<L.CircleMarker[]>([])
   const [stationsData, setStationsData] = useState<StationData[]>([])
   const [draftName, setDraftName] = useState('')
 
@@ -120,6 +127,11 @@ export default function SubwayMap({
     // Zoom control bottom-right
     L.control.zoom({ position: 'bottomright' }).addTo(map)
 
+    map.createPane(RESULT_HEAT_PANE)
+    map.getPane(RESULT_HEAT_PANE)!.style.zIndex = '430'
+    map.createPane(RESULT_BUBBLE_PANE)
+    map.getPane(RESULT_BUBBLE_PANE)!.style.zIndex = '460'
+
     // Context menu → right-click to place new station
     map.on('contextmenu', (e: L.LeafletMouseEvent) => {
       const containerPoint = map.latLngToContainerPoint(e.latlng)
@@ -140,6 +152,7 @@ export default function SubwayMap({
   useEffect(() => {
     const map = mapRef.current
     if (!map || stationsData.length === 0) return
+    const markers = stationMarkersRef.current
 
     const bounds: [number, number][] = []
 
@@ -175,7 +188,7 @@ export default function SubwayMap({
       })
 
       marker.addTo(map)
-      stationMarkersRef.current.set(st.station_complex_id, marker)
+      markers.set(st.station_complex_id, marker)
       bounds.push([st.lat, st.lon])
     })
 
@@ -184,8 +197,8 @@ export default function SubwayMap({
     }
 
     return () => {
-      stationMarkersRef.current.forEach(m => m.remove())
-      stationMarkersRef.current.clear()
+      markers.forEach(m => m.remove())
+      markers.clear()
     }
   // We intentionally only init markers once on station data load
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -249,13 +262,15 @@ export default function SubwayMap({
       })
   }, [drawnLine])
 
-  // ── Render results halos ───────────────────────────────────────────────────
+  // ── Render heat + bubbles for results ─────────────────────────────────────
   useEffect(() => {
     const map = mapRef.current
     if (!map) return
 
-    resultHalosRef.current.forEach(h => h.remove())
-    resultHalosRef.current = []
+    resultHeatRef.current.forEach(layer => layer.remove())
+    resultHeatRef.current = []
+    resultBubblesRef.current.forEach(layer => layer.remove())
+    resultBubblesRef.current = []
 
     if (!prediction) return
 
@@ -269,17 +284,43 @@ export default function SubwayMap({
       if (!marker) return
 
       const pct = Math.abs(affected.ridership_delta) / maxAbs
-      const radius = 8 + pct * 20
-      const color = affected.ridership_delta >= 0 ? '#10b981' : '#ef4444'
+      const color = impactColor(affected.ridership_delta)
       const sign = affected.ridership_delta >= 0 ? '+' : ''
+      const heatRadiusMeters = 500 + pct * 1200
+      const bubbleRadius = 7 + pct * 15
 
-      const halo = L.circleMarker(marker.getLatLng(), {
-        radius,
+      const outerGlow = L.circle(marker.getLatLng(), {
+        radius: heatRadiusMeters,
+        pane: RESULT_HEAT_PANE,
+        stroke: false,
         fillColor: color,
-        fillOpacity: 0.25,
-        color,
-        weight: 2,
-        opacity: 0.7,
+        fillOpacity: 0.08 + pct * 0.08,
+      }).addTo(map)
+
+      const innerGlow = L.circle(marker.getLatLng(), {
+        radius: heatRadiusMeters * 0.55,
+        pane: RESULT_HEAT_PANE,
+        stroke: false,
+        fillColor: color,
+        fillOpacity: 0.12 + pct * 0.12,
+      }).addTo(map)
+
+      const coreGlow = L.circle(marker.getLatLng(), {
+        radius: heatRadiusMeters * 0.24,
+        pane: RESULT_HEAT_PANE,
+        stroke: false,
+        fillColor: color,
+        fillOpacity: 0.18 + pct * 0.18,
+      }).addTo(map)
+
+      const bubble = L.circleMarker(marker.getLatLng(), {
+        pane: RESULT_BUBBLE_PANE,
+        radius: bubbleRadius,
+        fillColor: color,
+        fillOpacity: 0.42,
+        color: '#f8fafc',
+        weight: 2.5,
+        opacity: 0.95,
       })
         .bindPopup(
           `<div class="text-sm font-semibold">${affected.name}</div>` +
@@ -288,7 +329,8 @@ export default function SubwayMap({
         )
         .addTo(map)
 
-      resultHalosRef.current.push(halo)
+      resultHeatRef.current.push(outerGlow, innerGlow, coreGlow)
+      resultBubblesRef.current.push(bubble)
     })
   }, [prediction])
 
@@ -308,6 +350,25 @@ export default function SubwayMap({
       >
         Reset View
       </button>
+
+      {prediction && (
+        <div className="absolute bottom-6 left-6 z-[600] rounded-2xl border border-white/10 bg-[#11141d]/90 px-4 py-3 shadow-2xl backdrop-blur-sm">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-gray-300">
+            Impact Map
+          </p>
+          <div className="mt-2 flex items-center gap-2 text-xs text-gray-200">
+            <span className="inline-block h-3 w-3 rounded-full border border-white/70 bg-emerald-500/80" />
+            Gains
+          </div>
+          <div className="mt-1 flex items-center gap-2 text-xs text-gray-200">
+            <span className="inline-block h-3 w-3 rounded-full border border-white/70 bg-red-500/80" />
+            Losses
+          </div>
+          <p className="mt-2 max-w-40 text-[11px] leading-relaxed text-gray-400">
+            Soft glow shows heat intensity. Bright circles mark affected stations.
+          </p>
+        </div>
+      )}
 
       {/* New station draft mini-card */}
       {newStationDraft && (

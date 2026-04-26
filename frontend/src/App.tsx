@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react'
 import SubwayMap from './components/SubwayMap'
 import LeftPanel from './components/LeftPanel'
 import Toast from './components/Toast'
+import { describeMockRoute, generateMockPrediction } from './lib/mockPredictor'
 
 export interface DrawnStation {
   id: string
@@ -43,7 +44,10 @@ export interface AppState {
   loading: boolean
   prediction: Prediction | null
   error: string | null
+  mockSummary: string | null
 }
+
+const USE_MOCK_PREDICTION = import.meta.env.VITE_USE_MOCK_PREDICTION !== 'false'
 
 export default function App() {
   const [state, setState] = useState<AppState>({
@@ -53,6 +57,7 @@ export default function App() {
     loading: false,
     prediction: null,
     error: null,
+    mockSummary: null,
   })
 
   const setMode = useCallback((mode: Mode) => {
@@ -75,7 +80,13 @@ export default function App() {
   }, [])
 
   const clearAll = useCallback(() => {
-    setState(s => ({ ...s, drawnLine: [], prediction: null, mode: 'draw' }))
+    setState(s => ({
+      ...s,
+      drawnLine: [],
+      prediction: null,
+      mode: 'draw',
+      mockSummary: null,
+    }))
   }, [])
 
   const reorderLine = useCallback((newOrder: DrawnStation[]) => {
@@ -113,6 +124,18 @@ export default function App() {
   const predict = useCallback(async () => {
     setState(s => ({ ...s, loading: true, error: null }))
     try {
+      if (USE_MOCK_PREDICTION) {
+        const prediction = await generateMockPrediction(state.drawnLine)
+        setState(s => ({
+          ...s,
+          loading: false,
+          prediction,
+          mode: 'results',
+          mockSummary: describeMockRoute(s.drawnLine),
+        }))
+        return
+      }
+
       const res = await fetch('/api/simulate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -128,13 +151,31 @@ export default function App() {
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const prediction: Prediction = await res.json()
-      setState(s => ({ ...s, loading: false, prediction, mode: 'results' }))
-    } catch {
       setState(s => ({
         ...s,
         loading: false,
-        error: 'Prediction failed — check that the backend is running.',
+        prediction,
+        mode: 'results',
+        mockSummary: null,
       }))
+    } catch {
+      try {
+        const prediction = await generateMockPrediction(state.drawnLine)
+        setState(s => ({
+          ...s,
+          loading: false,
+          prediction,
+          mode: 'results',
+          mockSummary: describeMockRoute(s.drawnLine),
+          error: 'Backend unavailable — showing mock simulation results.',
+        }))
+      } catch {
+        setState(s => ({
+          ...s,
+          loading: false,
+          error: 'Prediction failed — mock data could not be generated.',
+        }))
+      }
     }
   }, [state.drawnLine])
 
