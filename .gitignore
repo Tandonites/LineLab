@@ -231,8 +231,6 @@ node_modules/
 *.tsbuildinfo
 
 # Data & models (too big for git)
-data/raw/
-data/processed/
 data/interim/
 models/
 *.pkl
