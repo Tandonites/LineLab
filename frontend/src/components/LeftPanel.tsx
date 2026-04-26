@@ -14,7 +14,7 @@ import {
   arrayMove,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import type { AppState, DrawnStation, Mode, Prediction } from '../App'
+import type { AppState, DrawnStation, Mode, Prediction, TrainService } from '../App'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function haversineKm(a: DrawnStation, b: DrawnStation): number {
@@ -39,6 +39,19 @@ function fmtCost(n: number): string {
   if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`
   if (n >= 1_000) return `$${(n / 1_000).toFixed(1)}K`
   return `$${n.toFixed(0)}`
+}
+
+const SERVICE_RULE_COPY: Record<TrainService, { min: string; max: string; description: string }> = {
+  local: {
+    min: '0.2 mi',
+    max: '0.5 mi',
+    description: 'Frequent stops through dense neighborhoods.',
+  },
+  express: {
+    min: '0.5 mi',
+    max: '3.0 mi',
+    description: 'Longer spacing for faster cross-borough travel.',
+  },
 }
 
 // ── Sortable station row ──────────────────────────────────────────────────────
@@ -137,6 +150,62 @@ function ResultsPanel({ prediction }: { prediction: Prediction }) {
         <p className="text-gray-500 text-xs mt-0.5">estimated daily operating cost</p>
       </div>
 
+      {prediction.route_comparison?.available && (
+        <div className="bg-[#1a1d27] border-l-4 border-violet-500 rounded-r-xl p-3">
+          <p className="text-gray-400 text-xs mb-2">Route Comparison</p>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="rounded-lg bg-[#141723] px-3 py-2">
+              <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">
+                Existing Fastest
+              </p>
+              <p className="mt-1 text-[11px] text-gray-400">
+                {prediction.route_comparison.origin_name} to {prediction.route_comparison.destination_name}
+              </p>
+              <div className="mt-2 space-y-1.5 text-sm text-white">
+                <p>
+                  Take the <span className="font-semibold text-sky-300">{prediction.route_comparison.first_train}</span> train
+                </p>
+                {prediction.route_comparison.transfer_station && prediction.route_comparison.second_train ? (
+                  <>
+                    <p>
+                      Transfer at <span className="font-semibold">{prediction.route_comparison.transfer_station}</span>
+                    </p>
+                    <p>
+                      Continue on the <span className="font-semibold text-sky-300">{prediction.route_comparison.second_train}</span> train
+                    </p>
+                  </>
+                ) : (
+                  <p className="text-emerald-300">
+                    Direct ride, no transfer needed
+                  </p>
+                )}
+              </div>
+              <p className="mt-1 text-xl font-bold text-gray-100">
+                {prediction.route_comparison.existing_travel_minutes} min
+              </p>
+            </div>
+            <div className="rounded-lg bg-[#141723] px-3 py-2">
+              <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">
+                Proposed Line
+              </p>
+              <p className="mt-1 text-sm font-semibold text-sky-300">
+                New corridor
+              </p>
+              <p className="mt-2 text-sm text-white">
+                Direct service from <span className="font-semibold">{prediction.route_comparison.origin_name}</span> to{' '}
+                <span className="font-semibold">{prediction.route_comparison.destination_name}</span>
+              </p>
+              <p className="mt-1 text-xl font-bold text-white">
+                {prediction.route_comparison.new_route_minutes} min
+              </p>
+            </div>
+          </div>
+          <p className="mt-2 text-xs text-emerald-300">
+            Saves about {prediction.route_comparison.time_saved_minutes} minutes versus today.
+          </p>
+        </div>
+      )}
+
       {/* Affected lines */}
       {prediction.affected_lines.length > 0 && (
         <div className="bg-[#1a1d27] border-l-4 border-red-500 rounded-r-xl p-3">
@@ -182,6 +251,7 @@ function ResultsPanel({ prediction }: { prediction: Prediction }) {
 interface Props {
   state: AppState
   setMode: (mode: Mode) => void
+  setTrainService: (trainService: TrainService) => void
   removeStation: (id: string) => void
   undoLast: () => void
   clearAll: () => void
@@ -193,13 +263,14 @@ interface Props {
 export default function LeftPanel({
   state,
   setMode,
+  setTrainService,
   removeStation,
   undoLast,
   clearAll,
   reorderLine,
   predict,
 }: Props) {
-  const { mode, drawnLine, loading, prediction, mockSummary } = state
+  const { mode, drawnLine, loading, prediction, mockSummary, validationError, trainService } = state
   const scrollRef = useRef<HTMLDivElement>(null)
 
   const sensors = useSensors(useSensor(PointerSensor))
@@ -213,8 +284,9 @@ export default function LeftPanel({
     }
   }
 
-  const canPredict = drawnLine.length >= 2 && !loading
+  const canPredict = drawnLine.length >= 2 && !loading && !validationError
   const kmTotal = totalKm(drawnLine)
+  const ruleCopy = SERVICE_RULE_COPY[trainService]
 
   return (
     <div className="w-[380px] shrink-0 h-screen bg-[#0f1117] border-r border-gray-800 flex flex-col">
@@ -281,6 +353,52 @@ export default function LeftPanel({
             </>
           )}
         </div>
+
+        <div className="rounded-xl border border-gray-700/50 bg-[#1a1d27] p-3">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-400">
+            Service Pattern
+          </p>
+          <div className="mt-3 flex gap-2">
+            <button
+              onClick={() => setTrainService('local')}
+              className={`flex-1 rounded-xl px-3 py-2 text-left transition-colors ${
+                trainService === 'local'
+                  ? 'bg-sky-600 text-white'
+                  : 'bg-[#141723] text-gray-300 hover:bg-[#1a1f30]'
+              }`}
+            >
+              <p className="text-xs font-semibold">Local</p>
+              <p className="mt-1 text-[11px] opacity-90">0.2 to 0.5 mi</p>
+            </button>
+            <button
+              onClick={() => setTrainService('express')}
+              className={`flex-1 rounded-xl px-3 py-2 text-left transition-colors ${
+                trainService === 'express'
+                  ? 'bg-orange-600 text-white'
+                  : 'bg-[#141723] text-gray-300 hover:bg-[#1a1f30]'
+              }`}
+            >
+              <p className="text-xs font-semibold">Express</p>
+              <p className="mt-1 text-[11px] opacity-90">0.5 to 3.0 mi</p>
+            </button>
+          </div>
+          <p className="mt-3 text-xs leading-relaxed text-gray-400">
+            {ruleCopy.description} Adjacent stops must stay between{' '}
+            <span className="font-semibold text-gray-200">{ruleCopy.min}</span> and{' '}
+            <span className="font-semibold text-gray-200">{ruleCopy.max}</span>.
+          </p>
+        </div>
+
+        {validationError && (
+          <div className="rounded-xl border border-amber-700/60 bg-amber-950/40 p-3 text-xs leading-relaxed text-amber-100">
+            <p className="font-semibold uppercase tracking-[0.16em] text-amber-300">
+              Stop Spacing Rule
+            </p>
+            <p className="mt-1">
+              {validationError}
+            </p>
+          </div>
+        )}
 
         {/* Station list */}
         {drawnLine.length > 0 && (
@@ -372,7 +490,7 @@ export default function LeftPanel({
               Predicting…
             </>
           ) : (
-            'Predict Impact'
+            validationError ? 'Add More Stops' : 'Predict Impact'
           )}
         </button>
       </div>
