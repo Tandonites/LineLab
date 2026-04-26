@@ -199,7 +199,7 @@ export default function LeftPanel({
   reorderLine,
   predict,
 }: Props) {
-  const { mode, drawnLine, loading, prediction } = state
+  const { mode, drawnLine, loading, prediction, mockSummary } = state
   const scrollRef = useRef<HTMLDivElement>(null)
 
   const sensors = useSensors(useSensor(PointerSensor))
@@ -313,6 +313,16 @@ export default function LeftPanel({
             className="overflow-hidden transition-all duration-300"
             style={{ maxHeight: prediction ? 9999 : 0 }}
           >
+            {mockSummary && (
+              <div className="mb-3 rounded-xl border border-sky-800/70 bg-sky-950/40 px-3 py-2">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-300">
+                  Mock Data
+                </p>
+                <p className="mt-1 text-xs leading-relaxed text-sky-100">
+                  {mockSummary}
+                </p>
+              </div>
+            )}
             <ResultsPanel prediction={prediction} />
           </div>
         )}
