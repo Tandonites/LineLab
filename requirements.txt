@@ -9,6 +9,7 @@ pyarrow>=15.0.0
 requests>=2.31.0
 python-dotenv>=1.0.0
 tqdm>=4.66.0
+networkx>=3.6.1
 
 # --- API server (for TS frontend to hit) ---
 fastapi>=0.110.0
