@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react'
 import SubwayMap from './components/SubwayMap'
 import LeftPanel from './components/LeftPanel'
 import Toast from './components/Toast'
+import { simulateNewLine } from './api/simulate'
 
 export interface DrawnStation {
   id: string
@@ -138,17 +139,19 @@ export default function App() {
       if (validationError) {
         return { ...s, error: validationError, validationError }
       }
-      return { ...s, drawnLine: nextLine, validationError: null }
+      return { ...s, drawnLine: nextLine, validationError: null, error: null }
     })
   }, [])
 
   const removeStation = useCallback((id: string) => {
     setState(s => {
       const drawnLine = s.drawnLine.filter(st => st.id !== id)
+      const validationError = validateLineSpacing(drawnLine, s.trainService)
       return {
         ...s,
         drawnLine,
-        validationError: validateLineSpacing(drawnLine, s.trainService),
+        validationError,
+        error: validationError,
       }
     })
   }, [])
@@ -156,10 +159,12 @@ export default function App() {
   const undoLast = useCallback(() => {
     setState(s => {
       const drawnLine = s.drawnLine.slice(0, -1)
+      const validationError = validateLineSpacing(drawnLine, s.trainService)
       return {
         ...s,
         drawnLine,
-        validationError: validateLineSpacing(drawnLine, s.trainService),
+        validationError,
+        error: validationError,
       }
     })
   }, [])
@@ -171,6 +176,7 @@ export default function App() {
       prediction: null,
       mode: 'draw',
       validationError: null,
+      error: null,
     }))
   }, [])
 
@@ -180,7 +186,7 @@ export default function App() {
       if (validationError) {
         return { ...s, error: validationError, validationError }
       }
-      return { ...s, drawnLine: newOrder, validationError: null }
+      return { ...s, drawnLine: newOrder, validationError: null, error: null }
     })
   }, [])
 
@@ -215,6 +221,7 @@ export default function App() {
         drawnLine: nextLine,
         newStationDraft: null,
         validationError: null,
+        error: null,
       }
     })
   }, [])
@@ -232,22 +239,7 @@ export default function App() {
 
     setState(s => ({ ...s, loading: true, error: null }))
     try {
-      const res = await fetch('/api/simulate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          train_service: state.trainService,
-          stations: state.drawnLine.map(st => ({
-            id: st.id,
-            name: st.name,
-            lat: st.lat,
-            lon: st.lon,
-            is_new: st.isNew,
-          })),
-        }),
-      })
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const prediction: Prediction = await res.json()
+      const prediction = await simulateNewLine(state.drawnLine, state.trainService)
       setState(s => ({
         ...s,
         loading: false,

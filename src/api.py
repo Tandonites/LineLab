@@ -6,14 +6,17 @@ from typing import Literal
 import csv
 import json
 
+import networkx as nx
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from networkx.readwrite import json_graph
 from pydantic import BaseModel, Field
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 STATIONS_PATH = ROOT_DIR / 'data' / 'processed' / 'stations.json'
 LINE_SUMMARY_PATH = ROOT_DIR / 'data' / 'processed' / 'line_summary.csv'
+TIME_GRAPH_PATH = ROOT_DIR / 'data' / 'processed' / 'mta_time_graph.json'
 
 
 class StationInput(BaseModel):
@@ -25,6 +28,7 @@ class StationInput(BaseModel):
 
 
 class SimulationRequest(BaseModel):
+    train_service: Literal['local', 'express'] = 'local'
     stations: list[StationInput] = Field(min_length=2)
 
 
@@ -40,12 +44,26 @@ class AffectedStation(BaseModel):
     ridership_delta_pct: float
 
 
+class RouteComparison(BaseModel):
+    available: bool
+    existing_route_label: str
+    origin_name: str
+    destination_name: str
+    first_train: str
+    transfer_station: str | None
+    second_train: str | None
+    existing_travel_minutes: int
+    new_route_minutes: int
+    time_saved_minutes: int
+
+
 class SimulationResponse(BaseModel):
     new_line_ridership: int
     peak_hour_ridership: int
     operational_cost_daily: int
     affected_lines: list[AffectedLine]
     affected_stations: list[AffectedStation]
+    route_comparison: RouteComparison | None
 
 
 class StationFeature(BaseModel):
@@ -129,6 +147,19 @@ STATION_FEATURES = load_station_features()
 LINE_TOTALS = load_line_totals()
 
 
+def load_time_graph() -> nx.Graph | None:
+    if not TIME_GRAPH_PATH.exists():
+        return None
+    try:
+        raw = json.loads(TIME_GRAPH_PATH.read_text(encoding='utf-8'))
+        return json_graph.node_link_graph(raw)
+    except (ValueError, TypeError):
+        return None
+
+
+TIME_GRAPH = load_time_graph()
+
+
 def proximity_score(station: StationFeature, drawn: list[StationInput]) -> float:
     min_distance = min(
         haversine_km(station.lat, station.lon, point.lat, point.lon) for point in drawn
@@ -143,6 +174,82 @@ def signed_delta(station_id: str, positive_ids: set[str]) -> Literal[-1, 1]:
     return 1 if bucket in {0, 1} else -1
 
 
+def estimate_new_route_minutes(route: list[StationInput], train_service: str) -> int:
+    line_km = max(0.5, route_length_km(route))
+    avg_speed_kmh = 28 if train_service == 'local' else 40
+    dwell_minutes = 0.7 * max(0, len(route) - 1)
+    in_motion_minutes = (line_km / avg_speed_kmh) * 60
+    return max(3, int(round(in_motion_minutes + dwell_minutes)))
+
+
+def nearest_graph_node(graph: nx.Graph, lat: float, lon: float) -> str | None:
+    best_node: str | None = None
+    best_dist = float('inf')
+    for node_id, attrs in graph.nodes(data=True):
+        node_lat = attrs.get('lat')
+        node_lon = attrs.get('lon')
+        if node_lat is None or node_lon is None:
+            continue
+        try:
+            dist = haversine_km(lat, lon, float(node_lat), float(node_lon))
+        except (TypeError, ValueError):
+            continue
+        if dist < best_dist:
+            best_dist = dist
+            best_node = str(node_id)
+    return best_node
+
+
+def estimate_existing_travel_minutes(route: list[StationInput]) -> int | None:
+    if TIME_GRAPH is None:
+        return None
+
+    origin = route[0]
+    destination = route[-1]
+    start_node = nearest_graph_node(TIME_GRAPH, origin.lat, origin.lon)
+    end_node = nearest_graph_node(TIME_GRAPH, destination.lat, destination.lon)
+    if not start_node or not end_node:
+        return None
+
+    try:
+        seconds = nx.dijkstra_path_length(TIME_GRAPH, start_node, end_node, weight='weight')
+    except (nx.NetworkXNoPath, nx.NodeNotFound):
+        return None
+
+    minutes = int(round(float(seconds) / 60.0))
+    return max(1, minutes)
+
+
+def build_route_comparison(payload: SimulationRequest, route: list[StationInput]) -> RouteComparison:
+    origin_name = route[0].name
+    destination_name = route[-1].name
+    new_route_minutes = estimate_new_route_minutes(route, payload.train_service)
+    existing_minutes = estimate_existing_travel_minutes(route)
+
+    if existing_minutes is None:
+        existing_minutes = int(round(new_route_minutes * 1.35 + 4))
+        available = False
+        first_train = 'Current service'
+        existing_label = 'Estimated current network trip'
+    else:
+        available = True
+        first_train = 'Current service'
+        existing_label = 'Current network fastest route'
+
+    return RouteComparison(
+        available=available,
+        existing_route_label=existing_label,
+        origin_name=origin_name,
+        destination_name=destination_name,
+        first_train=first_train,
+        transfer_station=None,
+        second_train=None,
+        existing_travel_minutes=existing_minutes,
+        new_route_minutes=new_route_minutes,
+        time_saved_minutes=max(0, existing_minutes - new_route_minutes),
+    )
+
+
 def simulate(payload: SimulationRequest) -> SimulationResponse:
     drawn = payload.stations
     if len(drawn) < 2:
@@ -154,6 +261,7 @@ def simulate(payload: SimulationRequest) -> SimulationResponse:
     new_line_ridership = int(12000 + line_km * 7600 + new_stop_count * 1800)
     peak_hour_ridership = int(new_line_ridership * 0.19)
     operational_cost_daily = int(line_km * 165000 + len(drawn) * 20000)
+    route_comparison = build_route_comparison(payload, drawn)
 
     if not STATION_FEATURES:
         return SimulationResponse(
@@ -162,6 +270,7 @@ def simulate(payload: SimulationRequest) -> SimulationResponse:
             operational_cost_daily=operational_cost_daily,
             affected_lines=[],
             affected_stations=[],
+            route_comparison=route_comparison,
         )
 
     positive_station_ids = {station.id for station in drawn if not station.is_new}
@@ -215,6 +324,7 @@ def simulate(payload: SimulationRequest) -> SimulationResponse:
         operational_cost_daily=operational_cost_daily,
         affected_lines=affected_lines[:8],
         affected_stations=affected_stations,
+        route_comparison=route_comparison,
     )
 
 
