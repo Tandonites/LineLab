@@ -3,7 +3,7 @@ import L from 'leaflet'
 import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png'
 import markerIcon from 'leaflet/dist/images/marker-icon.png'
 import markerShadow from 'leaflet/dist/images/marker-shadow.png'
-import type { DrawnStation, NewStationDraft, Prediction } from '../App'
+import type { DrawnStation, NewStationDraft, Prediction, TrainService } from '../App'
 
 // Fix Leaflet default icon paths broken by Vite bundling
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -62,6 +62,7 @@ interface StationData {
 interface Props {
   drawnLine: DrawnStation[]
   prediction: Prediction | null
+  trainService: TrainService
   newStationDraft: NewStationDraft | null
   onStationClick: (station: DrawnStation) => void
   onMapRightClick: (draft: NewStationDraft) => void
@@ -74,6 +75,11 @@ const NYC_ZOOM = 12
 const RESULT_HEAT_PANE = 'result-heat-pane'
 const RESULT_BUBBLE_PANE = 'result-bubble-pane'
 
+const SERVICE_RADII_METERS: Record<TrainService, { min: number; max: number }> = {
+  local: { min: 321.87, max: 804.67 },
+  express: { min: 804.67, max: 4828.03 },
+}
+
 function impactColor(delta: number): string {
   return delta >= 0 ? '#10b981' : '#ef4444'
 }
@@ -81,6 +87,7 @@ function impactColor(delta: number): string {
 export default function SubwayMap({
   drawnLine,
   prediction,
+  trainService,
   newStationDraft,
   onStationClick,
   onMapRightClick,
@@ -91,6 +98,7 @@ export default function SubwayMap({
   const mapRef = useRef<L.Map | null>(null)
   const stationMarkersRef = useRef<Map<string, L.CircleMarker>>(new Map())
   const drawnPolylineRef = useRef<L.Polyline | null>(null)
+  const stopRangeRef = useRef<L.Circle[]>([])
   const newStationMarkersRef = useRef<L.Marker[]>([])
   const resultHeatRef = useRef<L.Circle[]>([])
   const resultBubblesRef = useRef<L.CircleMarker[]>([])
@@ -262,6 +270,44 @@ export default function SubwayMap({
       })
   }, [drawnLine])
 
+  // ── Show allowable radius for the next stop ───────────────────────────────
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) return
+
+    stopRangeRef.current.forEach(layer => layer.remove())
+    stopRangeRef.current = []
+
+    if (drawnLine.length === 0) return
+
+    const anchor = drawnLine[drawnLine.length - 1]
+    const serviceRadii = SERVICE_RADII_METERS[trainService]
+
+    const maxRing = L.circle([anchor.lat, anchor.lon], {
+      radius: serviceRadii.max,
+      color: '#7dd3fc',
+      weight: 1.5,
+      opacity: 0.8,
+      dashArray: '6 6',
+      fillColor: '#38bdf8',
+      fillOpacity: 0.08,
+      interactive: false,
+    }).addTo(map)
+
+    const minRing = L.circle([anchor.lat, anchor.lon], {
+      radius: serviceRadii.min,
+      color: trainService === 'express' ? '#fb923c' : '#fbbf24',
+      weight: 1.25,
+      opacity: 0.9,
+      dashArray: '3 6',
+      fillColor: trainService === 'express' ? '#ea580c' : '#f59e0b',
+      fillOpacity: 0.08,
+      interactive: false,
+    }).addTo(map)
+
+    stopRangeRef.current = [maxRing, minRing]
+  }, [drawnLine, trainService])
+
   // ── Render heat + bubbles for results ─────────────────────────────────────
   useEffect(() => {
     const map = mapRef.current
@@ -367,6 +413,22 @@ export default function SubwayMap({
           <p className="mt-2 max-w-40 text-[11px] leading-relaxed text-gray-400">
             Soft glow shows heat intensity. Bright circles mark affected stations.
           </p>
+        </div>
+      )}
+
+      {drawnLine.length > 0 && (
+        <div className="absolute bottom-6 right-24 z-[600] rounded-2xl border border-white/10 bg-[#11141d]/90 px-4 py-3 shadow-2xl backdrop-blur-sm">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-gray-300">
+            Stop Spacing
+          </p>
+          <div className="mt-2 flex items-center gap-2 text-xs text-gray-200">
+            <span className="inline-block h-3 w-3 rounded-full border border-amber-300/80 bg-amber-500/70" />
+            Minimum {trainService === 'local' ? '0.2 mi' : '0.5 mi'}
+          </div>
+          <div className="mt-1 flex items-center gap-2 text-xs text-gray-200">
+            <span className="inline-block h-3 w-3 rounded-full border border-sky-300/80 bg-sky-500/70" />
+            Maximum {trainService === 'local' ? '0.5 mi' : '3.0 mi'}
+          </div>
         </div>
       )}
 

@@ -33,9 +33,22 @@ export interface Prediction {
   operational_cost_daily: number
   affected_lines: { line: string; delta_pct: number }[]
   affected_stations: AffectedStation[]
+  route_comparison: {
+    available: boolean
+    existing_route_label: string
+    origin_name: string
+    destination_name: string
+    first_train: string
+    transfer_station: string | null
+    second_train: string | null
+    existing_travel_minutes: number
+    new_route_minutes: number
+    time_saved_minutes: number
+  } | null
 }
 
 export type Mode = 'draw' | 'results'
+export type TrainService = 'local' | 'express'
 
 export interface AppState {
   mode: Mode
@@ -45,9 +58,51 @@ export interface AppState {
   prediction: Prediction | null
   error: string | null
   mockSummary: string | null
+  validationError: string | null
+  trainService: TrainService
 }
 
 const USE_MOCK_PREDICTION = import.meta.env.VITE_USE_MOCK_PREDICTION !== 'false'
+
+const SERVICE_RULES: Record<TrainService, { minMiles: number; maxMiles: number }> = {
+  local: { minMiles: 0.2, maxMiles: 0.5 },
+  express: { minMiles: 0.5, maxMiles: 3 },
+}
+
+function haversineMiles(
+  a: { lat: number; lon: number },
+  b: { lat: number; lon: number }
+): number {
+  const R = 3958.8
+  const dLat = ((b.lat - a.lat) * Math.PI) / 180
+  const dLon = ((b.lon - a.lon) * Math.PI) / 180
+  const lat1 = (a.lat * Math.PI) / 180
+  const lat2 = (b.lat * Math.PI) / 180
+  const x =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2
+
+  return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x))
+}
+
+function validateLineSpacing(
+  line: DrawnStation[],
+  trainService: TrainService
+): string | null {
+  const { minMiles, maxMiles } = SERVICE_RULES[trainService]
+
+  for (let i = 1; i < line.length; i += 1) {
+    const miles = haversineMiles(line[i - 1], line[i])
+    if (miles < minMiles) {
+      return `${line[i - 1].name} to ${line[i].name} is ${miles.toFixed(2)} miles. ${trainService === 'local' ? 'Local' : 'Express'} stops must be at least ${minMiles.toFixed(1)} miles apart.`
+    }
+    if (miles > maxMiles) {
+      return `${line[i - 1].name} to ${line[i].name} is ${miles.toFixed(2)} miles. ${trainService === 'local' ? 'Local' : 'Express'} stops must be no more than ${maxMiles.toFixed(1)} miles apart.`
+    }
+  }
+
+  return null
+}
 
 export default function App() {
   const [state, setState] = useState<AppState>({
@@ -58,25 +113,61 @@ export default function App() {
     prediction: null,
     error: null,
     mockSummary: null,
+    validationError: null,
+    trainService: 'local',
   })
 
   const setMode = useCallback((mode: Mode) => {
     setState(s => ({ ...s, mode }))
   }, [])
 
+  const setTrainService = useCallback((trainService: TrainService) => {
+    setState(s => {
+      const validationError = validateLineSpacing(s.drawnLine, trainService)
+      return {
+        ...s,
+        trainService,
+        validationError,
+        error: validationError,
+        prediction: null,
+        mode: 'draw',
+        mockSummary: null,
+      }
+    })
+  }, [])
+
   const addStation = useCallback((station: DrawnStation) => {
     setState(s => {
       if (s.drawnLine.find(st => st.id === station.id)) return s
-      return { ...s, drawnLine: [...s.drawnLine, station] }
+      const nextLine = [...s.drawnLine, station]
+      const validationError = validateLineSpacing(nextLine, s.trainService)
+      if (validationError) {
+        return { ...s, error: validationError, validationError }
+      }
+      return { ...s, drawnLine: nextLine, validationError: null }
     })
   }, [])
 
   const removeStation = useCallback((id: string) => {
-    setState(s => ({ ...s, drawnLine: s.drawnLine.filter(st => st.id !== id) }))
+    setState(s => {
+      const drawnLine = s.drawnLine.filter(st => st.id !== id)
+      return {
+        ...s,
+        drawnLine,
+        validationError: validateLineSpacing(drawnLine, s.trainService),
+      }
+    })
   }, [])
 
   const undoLast = useCallback(() => {
-    setState(s => ({ ...s, drawnLine: s.drawnLine.slice(0, -1) }))
+    setState(s => {
+      const drawnLine = s.drawnLine.slice(0, -1)
+      return {
+        ...s,
+        drawnLine,
+        validationError: validateLineSpacing(drawnLine, s.trainService),
+      }
+    })
   }, [])
 
   const clearAll = useCallback(() => {
@@ -86,11 +177,18 @@ export default function App() {
       prediction: null,
       mode: 'draw',
       mockSummary: null,
+      validationError: null,
     }))
   }, [])
 
   const reorderLine = useCallback((newOrder: DrawnStation[]) => {
-    setState(s => ({ ...s, drawnLine: newOrder }))
+    setState(s => {
+      const validationError = validateLineSpacing(newOrder, s.trainService)
+      if (validationError) {
+        return { ...s, error: validationError, validationError }
+      }
+      return { ...s, drawnLine: newOrder, validationError: null }
+    })
   }, [])
 
   const setNewStationDraft = useCallback((draft: NewStationDraft | null) => {
@@ -109,10 +207,21 @@ export default function App() {
         isNew: true,
         lines: [],
       }
+      const nextLine = [...s.drawnLine, newStation]
+      const validationError = validateLineSpacing(nextLine, s.trainService)
+      if (validationError) {
+        return {
+          ...s,
+          newStationDraft: null,
+          error: validationError,
+          validationError,
+        }
+      }
       return {
         ...s,
-        drawnLine: [...s.drawnLine, newStation],
+        drawnLine: nextLine,
         newStationDraft: null,
+        validationError: null,
       }
     })
   }, [])
@@ -122,16 +231,26 @@ export default function App() {
   }, [])
 
   const predict = useCallback(async () => {
+    const validationError = validateLineSpacing(state.drawnLine, state.trainService)
+    if (validationError) {
+      setState(s => ({ ...s, error: validationError, validationError }))
+      return
+    }
+
     setState(s => ({ ...s, loading: true, error: null }))
     try {
       if (USE_MOCK_PREDICTION) {
-        const prediction = await generateMockPrediction(state.drawnLine)
+        const prediction = await generateMockPrediction(
+          state.drawnLine,
+          state.trainService
+        )
         setState(s => ({
           ...s,
           loading: false,
           prediction,
           mode: 'results',
-          mockSummary: describeMockRoute(s.drawnLine),
+          mockSummary: describeMockRoute(s.drawnLine, s.trainService),
+          validationError: null,
         }))
         return
       }
@@ -140,6 +259,7 @@ export default function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          train_service: state.trainService,
           stations: state.drawnLine.map(st => ({
             id: st.id,
             name: st.name,
@@ -157,17 +277,22 @@ export default function App() {
         prediction,
         mode: 'results',
         mockSummary: null,
+        validationError: null,
       }))
     } catch {
       try {
-        const prediction = await generateMockPrediction(state.drawnLine)
+        const prediction = await generateMockPrediction(
+          state.drawnLine,
+          state.trainService
+        )
         setState(s => ({
           ...s,
           loading: false,
           prediction,
           mode: 'results',
-          mockSummary: describeMockRoute(s.drawnLine),
+          mockSummary: describeMockRoute(s.drawnLine, s.trainService),
           error: 'Backend unavailable — showing mock simulation results.',
+          validationError: null,
         }))
       } catch {
         setState(s => ({
@@ -177,7 +302,7 @@ export default function App() {
         }))
       }
     }
-  }, [state.drawnLine])
+  }, [state.drawnLine, state.trainService])
 
   const dismissError = useCallback(() => {
     setState(s => ({ ...s, error: null }))
@@ -188,6 +313,7 @@ export default function App() {
       <LeftPanel
         state={state}
         setMode={setMode}
+        setTrainService={setTrainService}
         removeStation={removeStation}
         undoLast={undoLast}
         clearAll={clearAll}
@@ -198,6 +324,7 @@ export default function App() {
         <SubwayMap
           drawnLine={state.drawnLine}
           prediction={state.prediction}
+          trainService={state.trainService}
           newStationDraft={state.newStationDraft}
           onStationClick={addStation}
           onMapRightClick={setNewStationDraft}
