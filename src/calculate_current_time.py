@@ -1,6 +1,7 @@
 import json
 from api import haversine_km, StationInput
 from find_path import find_path
+from mapping import MAPPING
 
 WALK_SPEED_MS = 1.4
 
@@ -57,7 +58,7 @@ def calculate_current_time(stations: list[StationInput]) -> tuple[float, bool]:
         walk_time += walk_dist / WALK_SPEED_MS
 
     # run Dijkstra's on the existing station segment
-    best_time, _ = find_path(existing_start.name, existing_end.name)
+    best_time, _ = find_path(MAPPING[existing_start.id], MAPPING[existing_end.id])
     transit_time = best_time + walk_time
 
     return min(pure_walk_time, transit_time), pure_walk_time < transit_time
@@ -72,11 +73,17 @@ if __name__ == "__main__":
         StationInput(id="1476", name="103 St", lat=40.788755, lon=-73.943821, is_new=True)
     ]
 
-    # # walk laterally, shorter to walk then take 1 down to columbus then B/C up
-    # lateral = [
-    #     StationInput(id="618", name="14 St", lat=40.740894, lon=-74.00169, is_new=False),
-    #     StationInput(id="405", name="23 St", lat=40.739864, lon=-73.9866, is_new=False),
-    # ]
+    # shorter to walk then take 1 down to columbus then B/C up
+    lateral = [
+        StationInput(id="157", name="96 St", lat=40.79164, lon=-73.9647, is_new=False),
+        StationInput(id="310", name="96 St", lat=40.79392, lon=-73.97232, is_new=False),
+    ]
+
+    # 14 St Chelsea to 23 St Baruch College (faster walking)
+    lateral2 = [
+        StationInput(id="618", name="14 St", lat=40.740894, lon=-74.00169, is_new=False),
+        StationInput(id="405", name="23 St", lat=40.739864, lon=-73.9866, is_new=False),
+    ]
 
     best_time, walking_only = calculate_current_time(Q_ext)
     print(f"time: {int(best_time // 60)}m {int(best_time % 60)}s", "walking-only" if walking_only else "using transit")
