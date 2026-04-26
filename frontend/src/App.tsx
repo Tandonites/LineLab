@@ -104,6 +104,7 @@ function validateLineSpacing(
 }
 
 export default function App() {
+  const [mapVersion, setMapVersion] = useState(0)
   const [state, setState] = useState<AppState>({
     mode: 'draw',
     drawnLine: [],
@@ -178,9 +179,11 @@ export default function App() {
   }, [])
 
   const clearAll = useCallback(() => {
+    setMapVersion(version => version + 1)
     setState(s => ({
       ...s,
       drawnLine: [],
+      newStationDraft: null,
       prediction: null,
       mode: 'draw',
       validationError: null,
@@ -287,6 +290,7 @@ export default function App() {
       />
       <div className="flex-1 relative">
         <SubwayMap
+          key={mapVersion}
           drawnLine={state.drawnLine}
           prediction={state.prediction}
           trainService={state.trainService}

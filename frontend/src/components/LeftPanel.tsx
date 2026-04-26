@@ -167,7 +167,7 @@ function ResultsPanel({ prediction }: { prediction: Prediction }) {
           gradient="from-cyan-400 via-sky-500 to-blue-600"
         />
         <MetricCard
-          label="Operating Cost (Monthly)"
+          label="Monthly Cost"
           value={fmtCost(prediction.operational_cost_monthly)}
           detail={`Estimated monthly operating cost. Daily equivalent ${fmtCost(prediction.operational_cost_daily)}.`}
           gradient="from-amber-300 via-orange-400 to-orange-500"
@@ -312,7 +312,7 @@ export default function LeftPanel({
           </div>
           <div className="min-w-0 flex-1">
             <p className="text-[11px] uppercase tracking-[0.28em] text-slate-500">Transit Sandbox</p>
-            <h1 className="mt-1 text-[1.9rem] font-semibold tracking-tight text-white">Corridor Studio</h1>
+            <h1 className="mt-1 text-[1.9rem] font-semibold tracking-tight text-white">LineLab</h1>
             <p className="mt-2 text-sm leading-relaxed text-slate-400">
               Sketch a new subway corridor, test stop spacing, and compare it with the existing NYC network.
             </p>
@@ -391,35 +391,32 @@ export default function LeftPanel({
         <section className="rounded-[1.5rem] border border-white/8 bg-[linear-gradient(180deg,rgba(18,22,34,0.96),rgba(11,14,22,0.98))] p-4 shadow-[0_18px_38px_rgba(0,0,0,0.22)]">
           <p className="text-[11px] uppercase tracking-[0.22em] text-slate-500">Service Pattern</p>
           <h3 className="mt-1 text-lg font-semibold text-white">Operating style</h3>
-          <div className="mt-4 grid grid-cols-2 gap-3">
-            <button
-              onClick={() => setTrainService('local')}
-              className={`rounded-[1.2rem] border px-4 py-4 text-left transition-all ${
-                trainService === 'local'
-                  ? 'border-cyan-300/18 bg-[linear-gradient(135deg,rgba(34,211,238,0.26),rgba(37,99,235,0.18))] shadow-[0_14px_30px_rgba(37,99,235,0.18)]'
-                  : 'border-white/8 bg-white/[0.03] hover:border-white/14'
-              }`}
-            >
-              <div className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] ring-1 ${trainService === 'local' ? 'bg-white/14 text-white ring-white/10' : 'bg-white/8 text-slate-400 ring-white/8'}`}>
+          <div className="mt-4">
+            <div className="relative grid grid-cols-2 rounded-2xl border border-white/8 bg-white/[0.04] p-1.5">
+              <div
+                className={`absolute inset-y-1.5 w-[calc(50%-6px)] rounded-[0.95rem] transition-transform duration-300 ease-out ${
+                  trainService === 'local'
+                    ? 'translate-x-0 bg-[linear-gradient(135deg,rgba(34,211,238,0.34),rgba(37,99,235,0.26))] shadow-[0_12px_26px_rgba(37,99,235,0.18)]'
+                    : 'translate-x-[calc(100%+0px)] bg-[linear-gradient(135deg,rgba(251,146,60,0.3),rgba(234,88,12,0.24))] shadow-[0_12px_26px_rgba(249,115,22,0.18)]'
+                }`}
+              />
+              <button
+                onClick={() => setTrainService('local')}
+                className={`relative z-10 rounded-[0.95rem] px-4 py-3 text-sm font-semibold uppercase tracking-[0.18em] transition-colors ${
+                  trainService === 'local' ? 'text-white' : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
                 Local
-              </div>
-              <p className="mt-4 text-sm font-medium text-white">Neighborhood coverage</p>
-              <p className="mt-1 text-sm text-slate-400">0.2 to 0.75 miles between stops</p>
-            </button>
-            <button
-              onClick={() => setTrainService('express')}
-              className={`rounded-[1.2rem] border px-4 py-4 text-left transition-all ${
-                trainService === 'express'
-                  ? 'border-orange-300/18 bg-[linear-gradient(135deg,rgba(251,146,60,0.24),rgba(234,88,12,0.16))] shadow-[0_14px_30px_rgba(249,115,22,0.16)]'
-                  : 'border-white/8 bg-white/[0.03] hover:border-white/14'
-              }`}
-            >
-              <div className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] ring-1 ${trainService === 'express' ? 'bg-white/14 text-white ring-white/10' : 'bg-white/8 text-slate-400 ring-white/8'}`}>
+              </button>
+              <button
+                onClick={() => setTrainService('express')}
+                className={`relative z-10 rounded-[0.95rem] px-4 py-3 text-sm font-semibold uppercase tracking-[0.18em] transition-colors ${
+                  trainService === 'express' ? 'text-white' : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
                 Express
-              </div>
-              <p className="mt-4 text-sm font-medium text-white">Fast cross-borough service</p>
-              <p className="mt-1 text-sm text-slate-400">0.5 to 3.0 miles between stops</p>
-            </button>
+              </button>
+            </div>
           </div>
           <div className={`mt-4 inline-flex rounded-full px-3 py-1 text-[11px] font-semibold ring-1 ${ruleCopy.chip}`}>
             Valid spacing: {ruleCopy.min} to {ruleCopy.max}

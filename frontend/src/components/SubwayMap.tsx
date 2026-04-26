@@ -68,16 +68,16 @@ interface Props {
   onCancelDraft: () => void
 }
 
-const NYC_CENTER: [number, number] = [40.7128, -73.906]
-const NYC_ZOOM = 11
-const NYC_MIN_ZOOM = 10
+const NYC_CENTER: [number, number] = [40.741, -73.94]
+const NYC_ZOOM = 12
+const NYC_MIN_ZOOM = 11
 const NYC_MAX_BOUNDS = L.latLngBounds(
   [40.54, -74.15],
   [40.92, -73.68]
 )
 const NYC_VIEW_BOUNDS = L.latLngBounds(
-  [40.57, -74.08],
-  [40.88, -73.74]
+  [40.61, -74.03],
+  [40.86, -73.82]
 )
 const RESULT_HEAT_PANE = 'result-heat-pane'
 const RESULT_BUBBLE_PANE = 'result-bubble-pane'
@@ -149,7 +149,7 @@ export default function SubwayMap({
       maxZoom: 18,
     }).addTo(map)
 
-    map.fitBounds(NYC_VIEW_BOUNDS, { padding: [28, 28] })
+    map.setView(NYC_CENTER, NYC_ZOOM)
     L.control.zoom({ position: 'bottomright' }).addTo(map)
 
     map.createPane(RESULT_HEAT_PANE)
@@ -463,7 +463,7 @@ export default function SubwayMap({
 
       <button
         className="absolute right-4 top-4 z-[600] rounded-full border border-white/10 bg-[linear-gradient(180deg,rgba(17,22,33,0.92),rgba(12,15,24,0.96))] px-4 py-2 text-sm font-medium text-white shadow-[0_14px_30px_rgba(0,0,0,0.24)] backdrop-blur-sm transition-all hover:border-white/18 hover:bg-[linear-gradient(180deg,rgba(24,31,45,0.96),rgba(15,20,31,0.98))]"
-        onClick={() => mapRef.current?.fitBounds(NYC_VIEW_BOUNDS, { padding: [28, 28] })}
+        onClick={() => mapRef.current?.setView(NYC_CENTER, NYC_ZOOM)}
       >
         Reset View
       </button>
