@@ -23,7 +23,8 @@ MODELS_DIR := models
 
 .DEFAULT_GOAL := help
 .PHONY: help setup setup-py setup-fe venv install dirs env \
-        data gtfs ridership preprocess train \
+	data gtfs ridership preprocess train \
+	system-deps \
         dev backend frontend jupyter \
         freeze clean nuke
 
@@ -112,12 +113,35 @@ train:  ## train ridership + cost models
 # ----------------------------------------------------------------------------
 # Run
 # ----------------------------------------------------------------------------
+system-deps:  ## install/check required system deps for local runtime
+	@echo ">>> checking system runtime dependencies"
+	@OS_NAME=$$(uname -s); \
+	if [ "$$OS_NAME" = "Darwin" ]; then \
+		if command -v brew >/dev/null 2>&1; then \
+			if ! brew list libomp >/dev/null 2>&1; then \
+				echo ">>> installing libomp (required by xgboost on macOS)"; \
+				brew install libomp; \
+			else \
+				echo ">>> libomp already installed"; \
+			fi; \
+		else \
+			echo "ERROR: Homebrew is required to install libomp on macOS."; \
+			echo "Install Homebrew, then run: brew install libomp"; \
+			exit 1; \
+		fi; \
+	elif [ "$$OS_NAME" = "Linux" ]; then \
+		echo ">>> assuming OpenMP runtime is available via system toolchain (libgomp)"; \
+	else \
+		echo ">>> unsupported OS for automatic system dependency install: $$OS_NAME"; \
+	fi
+
 dev:  ## run backend + frontend together (needs 2 terminals or use `make backend` / `make frontend`)
 	@echo "Run these in two terminals:"
 	@echo "  make backend"
 	@echo "  make frontend"
 
 backend: install  ## start FastAPI backend at :8000
+	$(MAKE) system-deps
 	$(BIN)/uvicorn src.api:app --reload --host 0.0.0.0 --port 8000
 
 frontend: fe-install  ## start vite dev server (TS frontend)

@@ -9,7 +9,6 @@ pyarrow>=15.0.0
 requests>=2.31.0
 python-dotenv>=1.0.0
 tqdm>=4.66.0
-networkx>=3.6.1
 
 # --- API server (for TS frontend to hit) ---
 fastapi>=0.110.0
@@ -25,7 +24,7 @@ lightgbm>=4.3.0
 geopandas>=0.14.0
 shapely>=2.0.0
 pyproj>=3.6.0
-networkx>=3.2.0            # subway graph + shortest paths
+networkx>=3.6.1            # subway graph + shortest paths
 osmnx>=1.9.0               # pull street/transit nets from OSM
 h3>=4.0.0                  # hex grid for OD demand aggregation
 
