@@ -1,0 +1,70 @@
+import pandas as pd
+import networkx as nx
+import json
+from collections import defaultdict
+from networkx.readwrite import json_graph
+
+stops = pd.read_csv("data/gtfs_subway/stops.txt")
+stop_times = pd.read_csv("data/gtfs_subway/stop_times.txt")
+transfers = pd.read_csv("data/gtfs_subway/transfers.txt")
+
+stop_times = stop_times.sort_values(["trip_id", "stop_sequence"])
+
+TRANSFER_PENALTY = 60  # time on top of transfer time given
+
+def gtfs_time_to_seconds(t):
+    h, m, s = map(int, t.split(":"))
+    return h * 3600 + m * 60 + s
+
+G = nx.Graph()
+
+
+for _, row in stops.iterrows():
+    G.add_node(row["stop_id"], name=row["stop_name"],
+               lat=row["stop_lat"], lon=row["stop_lon"])
+
+edge_times = defaultdict(list)
+
+# for building out weights, taking average time for more realistic ridership data
+for trip_id, group in stop_times.groupby("trip_id"):
+    rows = group.reset_index(drop=True)
+    for i in range(len(rows) - 1):
+        u = rows.loc[i,   "stop_id"]
+        v = rows.loc[i+1, "stop_id"]
+        dep = gtfs_time_to_seconds(rows.loc[i,   "departure_time"])
+        arr = gtfs_time_to_seconds(rows.loc[i+1, "arrival_time"])
+        edge_times[(u, v)].append(arr - dep)
+
+for (u, v), times in edge_times.items():
+    G.add_edge(u, v, weight=sum(times) / len(times))
+    
+for _, row in transfers.iterrows():
+    u, v = row["from_stop_id"], row["to_stop_id"]
+    if u == v:
+        continue
+    
+    # min_transfer_time is in seconds; default to 120s if missing
+    t = row.get("min_transfer_time", 120)
+    if pd.isna(t):
+        t = 120
+    t = int(t) + TRANSFER_PENALTY 
+    
+    if G.has_edge(u, v):
+        G[u][v]["weight"] = min(G[u][v]["weight"], t)
+    else:
+        G.add_edge(u, v, weight=t)
+   
+name_to_id = {data["name"]: nid for nid, data in G.nodes(data=True)}
+src = name_to_id["Knickerbocker Av"]
+dst = name_to_id["Astoria-Ditmars Blvd"]
+     
+# Shortest time in seconds using dijkstra's
+time_sec = nx.dijkstra_path_length(G, src, dst, weight="weight")
+path     = nx.dijkstra_path(G, src, dst, weight="weight")
+
+print(f"Estimated time: {int(time_sec // 60)}m {int(time_sec % 60)}s")
+print(f"Path: {[G.nodes[s]['name'] for s in path]}")
+
+data = json_graph.node_link_data(G)
+with open("data/processed/mta_time_graph.json", "w") as f:
+    json.dump(data, f)
