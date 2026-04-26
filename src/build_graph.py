@@ -53,17 +53,6 @@ for _, row in transfers.iterrows():
         G[u][v]["weight"] = min(G[u][v]["weight"], t)
     else:
         G.add_edge(u, v, weight=t)
-   
-name_to_id = {data["name"]: nid for nid, data in G.nodes(data=True)}
-src = name_to_id["Knickerbocker Av"]
-dst = name_to_id["Astoria-Ditmars Blvd"]
-     
-# Shortest time in seconds using dijkstra's
-time_sec = nx.dijkstra_path_length(G, src, dst, weight="weight")
-path     = nx.dijkstra_path(G, src, dst, weight="weight")
-
-print(f"Estimated time: {int(time_sec // 60)}m {int(time_sec % 60)}s")
-print(f"Path: {[G.nodes[s]['name'] for s in path]}")
 
 data = json_graph.node_link_data(G)
 with open("data/processed/mta_time_graph.json", "w") as f:
