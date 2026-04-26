@@ -18,10 +18,10 @@ def shortest_path_name(G, src_name, dst_name):
     dsts = find_stop_ids(G, dst_name)
     return shortest_path(G, srcs, dsts)
 
-# def shortest_path_obj(G, src_obj, dst_obj):
-    # srcs = [nid for nid, node in G.nodes(data=True) if nid.startswith(src_obj.id)]
-    # dsts = [nid for nid, node in G.nodes(data=True) if nid.startswith(dst_obj.id)]
-    # return shortest_path(G, srcs, dsts)
+def shortest_path_id(G, src_id, dst_id):
+    srcs = [nid for nid, node in G.nodes(data=True) if nid.startswith(src_id)]
+    dsts = [nid for nid, node in G.nodes(data=True) if nid.startswith(dst_id)]
+    return shortest_path(G, srcs, dsts)
 
 def shortest_path(G, src_ids, dst_ids):
     best_time, best_path = float("inf"), None
@@ -38,9 +38,9 @@ def shortest_path(G, src_ids, dst_ids):
 
     return best_time, best_path
 
-def find_path(src_name, dst_name, display=False) -> tuple[float, ]:
+def find_path(src_id, dst_id, display=False) -> tuple[float, ]:
     G = load_graph(JSON_GRAPH_FILE)
-    best_time, best_path = shortest_path_name(G, src_name, dst_name)
+    best_time, best_path = shortest_path_id(G, src_id, dst_id)
 
     if display:
         print(f"Estimated time: {int(best_time // 60)}m {int(best_time % 60)}s")
