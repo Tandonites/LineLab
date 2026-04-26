@@ -1,6 +1,6 @@
-# Highball
+# LineLab
 
-Highball is an NYC transit planning sandbox for drafting proposed subway corridors, simulating demand impact, and comparing proposed travel time/cost against current service.
+LineLab is an NYC transit planning sandbox for drafting proposed subway corridors, simulating demand impact, and comparing proposed travel time/cost against current service.
 
 It includes:
 
