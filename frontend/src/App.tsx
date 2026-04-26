@@ -2,7 +2,6 @@ import { useState, useCallback } from 'react'
 import SubwayMap from './components/SubwayMap'
 import LeftPanel from './components/LeftPanel'
 import Toast from './components/Toast'
-import { describeMockRoute, generateMockPrediction } from './lib/mockPredictor'
 
 export interface DrawnStation {
   id: string
