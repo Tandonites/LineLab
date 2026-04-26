@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Literal
 import csv
 import json
+import logging
 
 import networkx as nx
 import numpy as np
@@ -34,6 +35,10 @@ MONTHLY_COST_LABELS_PATH = ROOT_DIR / 'data' / 'raw' / 'monthly_operating_cost.c
 MODELS_DIR = ROOT_DIR / 'data' / 'models'
 STATION_FEATURES_CSV = ROOT_DIR / 'data' / 'raw' / 'station_features.csv'
 GTFS_TRIPS_PATH = ROOT_DIR / 'data' / 'gtfs_subway' / 'trips.txt'
+TIME_MODEL_PATH = ROOT_DIR / 'data' / 'models' / 'time_model.joblib'
+
+
+logger = logging.getLogger(__name__)
 
 
 class StationInput(BaseModel):
@@ -366,9 +371,36 @@ def load_station_feature_lookup() -> dict[str, dict]:
     return lookup
 
 
+def load_time_route_predictor():
+    """Load the ML time model + parser. If model is missing, train and persist one."""
+    try:
+        from data.time_predict import MODEL_PATH as TP_MODEL_PATH
+        from data.time_predict import load_model as tp_load_model
+        from data.time_predict import parse_and_predict_route as tp_parse_and_predict_route
+        from data.time_predict import save_model as tp_save_model
+        from data.time_predict import train_model as tp_train_model
+    except Exception as exc:
+        logger.warning('Time predictor import unavailable: %s', exc)
+        return None, None
+
+    try:
+        model_path = Path(TP_MODEL_PATH)
+        if model_path.exists():
+            model = tp_load_model()
+        else:
+            logger.info('time_model.joblib not found; training new time model...')
+            model = tp_train_model()
+            tp_save_model(model)
+        return model, tp_parse_and_predict_route
+    except Exception as exc:
+        logger.warning('Failed to initialize time predictor model: %s', exc)
+        return None, None
+
+
 RIDERSHIP_MODEL, PEAK_FACTOR_MODEL, MODEL_META = load_ml_models()
 COST_ML_MODEL, COST_ML_FEATURE_COLS = load_cost_ml_artifacts()
 STATION_FEATURE_LOOKUP = load_station_feature_lookup()
+TIME_ROUTE_MODEL, TIME_ROUTE_PARSER = load_time_route_predictor()
 
 BOROUGH_COLS = ['boro_Bronx', 'boro_Brooklyn', 'boro_Manhattan', 'boro_Queens', 'boro_Staten Island']
 BOROUGH_MAP = {
@@ -531,6 +563,25 @@ def signed_delta(station_id: str, positive_ids: set[str]) -> Literal[-1, 1]:
 
 
 def estimate_new_route_minutes(route: list[StationInput], train_service: str) -> int:
+    if TIME_ROUTE_MODEL is not None and TIME_ROUTE_PARSER is not None:
+        try:
+            stations_payload = [
+                {
+                    'station_complex_id': st.id,
+                    'name': st.name,
+                    'lat': st.lat,
+                    'lon': st.lon,
+                }
+                for st in route
+            ]
+            pred = TIME_ROUTE_PARSER(stations_payload, train_service, TIME_ROUTE_MODEL, verbose=False)
+            total_minutes = float(pred.get('total_minutes', 0.0))
+            if np.isfinite(total_minutes) and total_minutes > 0:
+                return max(1, int(round(total_minutes)))
+        except Exception:
+            # Fall through to deterministic geometry-based estimate.
+            pass
+
     line_km = max(0.5, route_length_km(route))
     avg_speed_kmh = 28 if train_service == 'local' else 40
     dwell_minutes = 0.7 * max(0, len(route) - 1)

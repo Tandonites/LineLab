@@ -1,19 +1,44 @@
 # time_predict.py
 import pandas as pd
-import numpy as np
 import joblib
 import os
+import math
+from pathlib import Path
 from xgboost import XGBRegressor
-from borough_parser import load_borough_polygons, get_borough
-from timegraph_parser import haversine
 
-TRAINING_DATA_PATH = "data/processed/time_training_data.csv"
+try:
+    from .borough_parser import load_borough_polygons, get_borough
+except ImportError:
+    from borough_parser import load_borough_polygons, get_borough
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+TRAINING_DATA_PATH = ROOT_DIR / "data" / "processed" / "time_training_data.csv"
 EXPRESS_MULTIPLIER = 1.25  # express trains are 1.25x faster than local
-MODEL_PATH = "data/processed/time_model.joblib"
+MODEL_PATH = ROOT_DIR / "data" / "models" / "time_model.joblib"
 
 # compute mean speed dynamically from training data as default for new stations
 _df = pd.read_csv(TRAINING_DATA_PATH)
 MEAN_SPEED_MS = (_df["distance_m"] / _df["travel_time_seconds"]).mean()
+
+
+_BOROUGH_POLYGONS = None
+
+
+def haversine(lat1, lon1, lat2, lon2):
+    """Great-circle distance in meters."""
+    R = 6_371_000
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+def _get_borough_polygons():
+    global _BOROUGH_POLYGONS
+    if _BOROUGH_POLYGONS is None:
+        _BOROUGH_POLYGONS = load_borough_polygons()
+    return _BOROUGH_POLYGONS
 
 # encode boroughs as integers since XGBoost requires numeric features
 BOROUGH_ENCODING = {
@@ -70,7 +95,7 @@ def predict_time(lat1, lon1, lat2, lon2, borough_u, borough_v, train_service, mo
     return predicted
 
 # Taking list of station objects from frontend and predicts total travel time along new route
-def parse_and_predict_route(stations, train_service, model):
+def parse_and_predict_route(stations, train_service, model, verbose=True):
     
     total_seconds = 0.0
     segment_times = []
@@ -82,8 +107,8 @@ def parse_and_predict_route(stations, train_service, model):
         # extract coordinates and borough from each station object
         lat1, lon1 = u["lat"], u["lon"]
         lat2, lon2 = v["lat"], v["lon"]
-        borough_u = u["borough"]
-        borough_v = v["borough"]
+        borough_u = u.get("borough") or get_borough(lat1, lon1, _get_borough_polygons())
+        borough_v = v.get("borough") or get_borough(lat2, lon2, _get_borough_polygons())
 
         # predict time for this segment
         seg_time = predict_time(lat1, lon1, lat2, lon2, borough_u, borough_v, train_service, model)
@@ -91,7 +116,8 @@ def parse_and_predict_route(stations, train_service, model):
         # log each segment for debugging
         u_label = u["name"] if u["name"] else f"New Station ({lat1}, {lon1})"
         v_label = v["name"] if v["name"] else f"New Station ({lat2}, {lon2})"
-        print(f"Segment {u_label} -> {v_label}: {int(seg_time // 60)}m {int(seg_time % 60)}s")
+        if verbose:
+            print(f"Segment {u_label} -> {v_label}: {int(seg_time // 60)}m {int(seg_time % 60)}s")
 
         segment_times.append({
             "from": u_label,
@@ -101,7 +127,8 @@ def parse_and_predict_route(stations, train_service, model):
 
         total_seconds += seg_time
 
-    print(f"Total predicted time: {int(total_seconds // 60)}m {int(total_seconds % 60)}s")
+    if verbose:
+        print(f"Total predicted time: {int(total_seconds // 60)}m {int(total_seconds % 60)}s")
 
     return {
         "total_seconds": total_seconds,
@@ -109,37 +136,3 @@ def parse_and_predict_route(stations, train_service, model):
         "segments": segment_times
     }
 
-if __name__ == "__main__":
-    # load existing model if available, otherwise train and save a new one
-    if os.path.exists(MODEL_PATH):
-        print("Loading existing model")
-        model = load_model()
-    else:
-        print("Training new model")
-        model = train_model()
-        save_model(model)
-
-    # test parse_and_predict_route with a sample stations array
-    test_stations = [
-        {"station_complex_id": "", "name": "Jackson Heights-Roosevelt Ave", "borough": "Queens", "lat": 40.7466, "lon": -73.8912},
-        {"station_complex_id": "", "name": "Elmhurst-Queens Blvd", "borough": "Queens", "lat": 40.7411, "lon": -73.8893},
-        {"station_complex_id": "", "name": "Maspeth-Grand Ave", "borough": "Queens", "lat": 40.7297, "lon": -73.8821},
-        {"station_complex_id": "", "name": "Eliot Ave", "borough": "Queens", "lat": 40.7203, "lon": -73.8837},
-        {"station_complex_id": "", "name": "Metropolitan Ave", "borough": "Queens", "lat": 40.7118, "lon": -73.8893},
-        {"station_complex_id": "", "name": "Myrtle Ave", "borough": "Queens", "lat": 40.7003, "lon": -73.8943},
-        {"station_complex_id": "", "name": "Wilson Ave", "borough": "Brooklyn", "lat": 40.6888, "lon": -73.9042},
-        {"station_complex_id": "", "name": "Atlantic Ave", "borough": "Brooklyn", "lat": 40.6766, "lon": -73.9038},
-        {"station_complex_id": "", "name": "Sutter Ave", "borough": "Brooklyn", "lat": 40.6685, "lon": -73.9025},
-        {"station_complex_id": "", "name": "Livonia Ave", "borough": "Brooklyn", "lat": 40.6641, "lon": -73.9026},
-        {"station_complex_id": "", "name": "Linden Blvd", "borough": "Brooklyn", "lat": 40.6586, "lon": -73.9028},
-        {"station_complex_id": "", "name": "Remsen Ave", "borough": "Brooklyn", "lat": 40.6521, "lon": -73.9103},
-        {"station_complex_id": "", "name": "Utica Ave", "borough": "Brooklyn", "lat": 40.6413, "lon": -73.9284},
-        {"station_complex_id": "", "name": "Brooklyn College-Flatbush Ave", "borough": "Brooklyn", "lat": 40.6327, "lon": -73.9477},
-        {"station_complex_id": "", "name": "East 16th St", "borough": "Brooklyn", "lat": 40.6299, "lon": -73.9616},
-        {"station_complex_id": "", "name": "McDonald Ave", "borough": "Brooklyn", "lat": 40.6259, "lon": -73.9762},
-        {"station_complex_id": "", "name": "New Utrecht Ave", "borough": "Brooklyn", "lat": 40.6191, "lon": -73.9995},
-        {"station_complex_id": "", "name": "Eighth Ave", "borough": "Brooklyn", "lat": 40.6288, "lon": -74.0116},
-        {"station_complex_id": "", "name": "Brooklyn Army Terminal", "borough": "Brooklyn", "lat": 40.6451, "lon": -74.0242},
-    ]
-
-    parse_and_predict_route(test_stations, "express", model)
