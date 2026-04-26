@@ -1,0 +1,11 @@
+Hour 1 — Setup & alignment
+Clone repo, confirm data loads, assign roles, agree on scope.
+Hours 1–3 — Data pipeline
+Parse GTFS into a NetworkX graph, load turnstile OD counts, join census LODES flows. Goal: one clean graph object and one OD demand matrix in memory.
+Hours 3–5 — Core algorithm ★
+Shortest-path on the existing network for each OD pair (Dijkstra/A*), add hypothetical new line edges, recompute paths, diff to find diverted demand. Output: ridership delta per existing line + newly viable trip count. This is the phase to protect — if time slips, cut cost estimation before touching this.
+Hours 5–7 — Visualization & demo
+Interactive map (Folium/Plotly) showing the existing network, the drawn new line, and ridership shifts. Cost estimate panel and newly viable trips overlay.
+Hour 8 — Pitch prep
+Narrative: problem → data gap → tool → BQX baseline demo → generalize. Freeze code, rehearse once, prep for Q&A on methodology.
+Buffer rule: if the core algorithm runs long, cut cost estimation — keep the map demo intact no matter what.
