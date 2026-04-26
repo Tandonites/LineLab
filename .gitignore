@@ -150,6 +150,7 @@ activemq-data/
 .env
 .envrc
 .venv
+.venv/.install.stamp
 env/
 venv/
 ENV/
@@ -224,6 +225,7 @@ requirements.lock
 frontend/node_modules/
 frontend/.vite/
 frontend/*.local
+frontend/node_modules/.install.stamp
 node_modules/
 *.tsbuildinfo
 

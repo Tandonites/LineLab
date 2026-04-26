@@ -27,6 +27,10 @@ MODELS_DIR := models
         dev backend frontend jupyter \
         freeze clean nuke
 
+# Stamp files — touch these to signal that deps are up to date
+PY_STAMP  := $(VENV)/.install.stamp
+FE_STAMP  := $(FRONTEND_DIR)/node_modules/.install.stamp
+
 help:  ## show targets
 	@echo "MTA Transit Line Predictor"
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -39,18 +43,22 @@ setup: setup-py setup-fe  ## one-shot: python + frontend
 
 setup-py: venv install dirs env  ## python backend setup
 
-setup-fe:  ## scaffold TS frontend (vite + react + leaflet)
+setup-fe: fe-install  ## scaffold TS frontend (vite + react + leaflet)
 	@if [ ! -d $(FRONTEND_DIR) ]; then \
 		echo ">>> scaffolding vite + react + ts frontend"; \
 		$(NPM) create vite@latest $(FRONTEND_DIR) -- --template react-ts; \
 		cd $(FRONTEND_DIR) && $(NPM) install && \
 		$(NPM) install leaflet react-leaflet @types/leaflet \
-			leaflet-draw @types/leaflet-draw react-leaflet-draw \
-			axios recharts; \
-	else \
-		echo ">>> frontend already exists, installing deps"; \
-		cd $(FRONTEND_DIR) && $(NPM) install; \
+			@dnd-kit/core @dnd-kit/sortable @dnd-kit/utilities \
+			tailwindcss @tailwindcss/vite; \
 	fi
+
+# Install frontend deps when package.json is newer than the stamp
+fe-install: $(FE_STAMP)
+$(FE_STAMP): $(FRONTEND_DIR)/package.json
+	@echo ">>> npm install (package.json changed)"
+	cd $(FRONTEND_DIR) && $(NPM) install
+	touch $(FE_STAMP)
 
 venv: $(VENV)/bin/activate  ## create python venv
 
@@ -59,8 +67,13 @@ $(VENV)/bin/activate:
 	$(PYTHON) -m venv $(VENV)
 	$(PIP) install --upgrade pip setuptools wheel
 
-install: venv  ## install python requirements
+install: $(PY_STAMP)  ## install python requirements
+
+# Install python deps when requirements.txt is newer than the stamp
+$(PY_STAMP): requirements.txt | venv
+	@echo ">>> pip install (requirements.txt changed)"
 	$(PIP) install -r requirements.txt
+	touch $(PY_STAMP)
 
 dirs:  ## create project structure
 	mkdir -p $(RAW_DIR) $(PROCESSED_DIR) $(MODELS_DIR) src notebooks
@@ -104,10 +117,10 @@ dev:  ## run backend + frontend together (needs 2 terminals or use `make backend
 	@echo "  make backend"
 	@echo "  make frontend"
 
-backend:  ## start FastAPI backend at :8000
+backend: install  ## start FastAPI backend at :8000
 	$(BIN)/uvicorn src.api:app --reload --host 0.0.0.0 --port 8000
 
-frontend:  ## start vite dev server (TS frontend)
+frontend: fe-install  ## start vite dev server (TS frontend)
 	cd $(FRONTEND_DIR) && $(NPM) run dev
 
 jupyter:  ## launch jupyter for exploration
@@ -119,7 +132,7 @@ jupyter:  ## launch jupyter for exploration
 clean:  ## remove caches
 	find . -type d -name __pycache__ -exec rm -rf {} +
 	find . -type d -name .ipynb_checkpoints -exec rm -rf {} +
-	find . -type d -name node_modules -prune -exec rm -rf {} +
+	rm -f $(PY_STAMP) $(FE_STAMP)
 
-nuke: clean  ## clean + remove venv, data, models
-	rm -rf $(VENV) $(DATA_DIR) $(MODELS_DIR) $(FRONTEND_DIR)
+nuke: clean  ## clean + remove venv, data, models, node_modules
+	rm -rf $(VENV) $(DATA_DIR) $(MODELS_DIR) $(FRONTEND_DIR)/node_modules
