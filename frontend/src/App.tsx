@@ -57,10 +57,16 @@ export interface AppState {
   newStationDraft: NewStationDraft | null
   loading: boolean
   prediction: Prediction | null
+  suggestionSummary: string | null
   error: string | null
   validationError: string | null
   trainService: TrainService
   showAllStations: boolean
+}
+
+interface SuggestionCandidate {
+  stations: DrawnStation[]
+  trainService: TrainService
 }
 
 const SERVICE_RULES: Record<TrainService, { minMiles: number; maxMiles: number }> = {
@@ -111,6 +117,7 @@ export default function App() {
     newStationDraft: null,
     loading: false,
     prediction: null,
+    suggestionSummary: null,
     error: null,
     validationError: null,
     trainService: 'local',
@@ -130,6 +137,7 @@ export default function App() {
         validationError,
         error: validationError,
         prediction: null,
+        suggestionSummary: null,
         mode: 'draw',
         showAllStations: true,
       }
@@ -148,7 +156,7 @@ export default function App() {
       if (validationError) {
         return { ...s, error: validationError, validationError }
       }
-      return { ...s, drawnLine: nextLine, validationError: null, error: null }
+      return { ...s, drawnLine: nextLine, validationError: null, error: null, suggestionSummary: null }
     })
   }, [])
 
@@ -161,6 +169,7 @@ export default function App() {
         drawnLine,
         validationError,
         error: validationError,
+        suggestionSummary: null,
       }
     })
   }, [])
@@ -174,6 +183,7 @@ export default function App() {
         drawnLine,
         validationError,
         error: validationError,
+        suggestionSummary: null,
       }
     })
   }, [])
@@ -185,6 +195,7 @@ export default function App() {
       drawnLine: [],
       newStationDraft: null,
       prediction: null,
+      suggestionSummary: null,
       mode: 'draw',
       validationError: null,
       error: null,
@@ -198,7 +209,7 @@ export default function App() {
       if (validationError) {
         return { ...s, error: validationError, validationError }
       }
-      return { ...s, drawnLine: newOrder, validationError: null, error: null }
+      return { ...s, drawnLine: newOrder, validationError: null, error: null, suggestionSummary: null }
     })
   }, [])
 
@@ -226,6 +237,7 @@ export default function App() {
           newStationDraft: null,
           error: validationError,
           validationError,
+          suggestionSummary: null,
         }
       }
       return {
@@ -234,6 +246,7 @@ export default function App() {
         newStationDraft: null,
         validationError: null,
         error: null,
+        suggestionSummary: null,
       }
     })
   }, [])
@@ -256,6 +269,7 @@ export default function App() {
         ...s,
         loading: false,
         prediction,
+        suggestionSummary: null,
         mode: 'results',
         validationError: null,
         showAllStations: false,
@@ -265,9 +279,157 @@ export default function App() {
         ...s,
         loading: false,
         prediction: null,
+        suggestionSummary: null,
         mode: 'draw',
         error: 'Prediction failed — backend unavailable or returned invalid data.',
         showAllStations: true,
+      }))
+    }
+  }, [state.drawnLine, state.trainService])
+
+  const suggestCheaperLine = useCallback(async () => {
+    const validationError = validateLineSpacing(state.drawnLine, state.trainService)
+    if (validationError) {
+      setState(s => ({ ...s, error: validationError, validationError }))
+      return
+    }
+
+    if (state.drawnLine.length < 2) {
+      setState(s => ({ ...s, error: 'Add at least two stops before requesting a suggestion.' }))
+      return
+    }
+
+    const dedupe = (candidates: SuggestionCandidate[]): SuggestionCandidate[] => {
+      const seen = new Set<string>()
+      const out: SuggestionCandidate[] = []
+      for (const candidate of candidates) {
+        const key = `${candidate.trainService}:${candidate.stations.map(st => st.id).join('>')}`
+        if (seen.has(key)) continue
+        seen.add(key)
+        out.push(candidate)
+      }
+      return out
+    }
+
+    const buildCandidates = (): SuggestionCandidate[] => {
+      const base = state.drawnLine
+      const candidates: SuggestionCandidate[] = []
+      const alternateService: TrainService = state.trainService === 'local' ? 'express' : 'local'
+
+      if (!validateLineSpacing(base, alternateService)) {
+        candidates.push({ stations: base, trainService: alternateService })
+      }
+
+      if (base.length >= 3) {
+        for (let i = 1; i < base.length - 1; i += 1) {
+          const pruned = base.filter((_, idx) => idx !== i)
+          if (!validateLineSpacing(pruned, state.trainService)) {
+            candidates.push({ stations: pruned, trainService: state.trainService })
+          }
+          if (!validateLineSpacing(pruned, alternateService)) {
+            candidates.push({ stations: pruned, trainService: alternateService })
+          }
+        }
+      }
+
+      if (base.length >= 5) {
+        const mids = base.slice(1, -1).filter((_, idx) => idx % 2 === 0)
+        const everyOther = [base[0], ...mids, base[base.length - 1]]
+        if (!validateLineSpacing(everyOther, state.trainService)) {
+          candidates.push({ stations: everyOther, trainService: state.trainService })
+        }
+        if (!validateLineSpacing(everyOther, alternateService)) {
+          candidates.push({ stations: everyOther, trainService: alternateService })
+        }
+      }
+
+      return dedupe(candidates)
+    }
+
+    setState(s => ({ ...s, loading: true, error: null }))
+    try {
+      const baseline = await simulateNewLine(state.drawnLine, state.trainService)
+      const candidates = buildCandidates()
+
+      if (candidates.length === 0) {
+        setState(s => ({
+          ...s,
+          loading: false,
+          error: 'No valid similar alternatives found for the current spacing rules.',
+        }))
+        return
+      }
+
+      const evaluated = await Promise.all(
+        candidates.map(async candidate => {
+          try {
+            const prediction = await simulateNewLine(candidate.stations, candidate.trainService)
+            return { ...candidate, prediction }
+          } catch {
+            return null
+          }
+        })
+      )
+
+      const valid = evaluated.filter(item => item !== null)
+      const similarCheaper = valid
+        .filter(item => {
+          const ridershipRatio = item.prediction.new_line_ridership / Math.max(1, baseline.new_line_ridership)
+          const similar = ridershipRatio >= 0.8 && ridershipRatio <= 1.2
+          const cheaper = item.prediction.operational_cost_monthly < baseline.operational_cost_monthly * 0.98
+          return similar && cheaper
+        })
+        .sort((a, b) => a.prediction.operational_cost_monthly - b.prediction.operational_cost_monthly)
+
+      const best = similarCheaper[0] ?? null
+
+      if (!best) {
+        setState(s => ({
+          ...s,
+          loading: false,
+          suggestionSummary: null,
+          error: 'No cheaper similar line found. Try adding/removing a stop and retry.',
+        }))
+        return
+      }
+
+      const stopDelta = best.stations.length - state.drawnLine.length
+      const baselineCost = baseline.operational_cost_monthly
+      const costDeltaPct = ((best.prediction.operational_cost_monthly - baselineCost) / Math.max(1, baselineCost)) * 100
+      const ridershipDeltaPct =
+        ((best.prediction.new_line_ridership - baseline.new_line_ridership) / Math.max(1, baseline.new_line_ridership)) * 100
+
+      const parts: string[] = []
+      if (best.trainService !== state.trainService) {
+        parts.push(`switched to ${best.trainService}`)
+      }
+      if (stopDelta !== 0) {
+        parts.push(stopDelta < 0 ? `removed ${Math.abs(stopDelta)} stop${Math.abs(stopDelta) === 1 ? '' : 's'}` : `added ${stopDelta} stop${stopDelta === 1 ? '' : 's'}`)
+      }
+      if (parts.length === 0) {
+        parts.push('kept same stop count and service pattern')
+      }
+
+      const summary = `${parts.join(', ')} · cost ${costDeltaPct.toFixed(1)}% · ridership ${ridershipDeltaPct >= 0 ? '+' : ''}${ridershipDeltaPct.toFixed(1)}%`
+
+      setState(s => ({
+        ...s,
+        loading: false,
+        drawnLine: best.stations,
+        trainService: best.trainService,
+        prediction: best.prediction,
+        suggestionSummary: summary,
+        mode: 'results',
+        showAllStations: false,
+        validationError: null,
+        error: null,
+      }))
+    } catch {
+      setState(s => ({
+        ...s,
+        loading: false,
+        suggestionSummary: null,
+        error: 'Line suggestion failed — backend unavailable or returned invalid data.',
       }))
     }
   }, [state.drawnLine, state.trainService])
@@ -287,6 +449,7 @@ export default function App() {
         clearAll={clearAll}
         reorderLine={reorderLine}
         predict={predict}
+        suggestCheaperLine={suggestCheaperLine}
       />
       <div className="flex-1 relative">
         <SubwayMap

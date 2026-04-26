@@ -283,6 +283,7 @@ interface Props {
   clearAll: () => void
   reorderLine: (newOrder: DrawnStation[]) => void
   predict: () => void
+  suggestCheaperLine: () => void
 }
 
 export default function LeftPanel({
@@ -294,8 +295,9 @@ export default function LeftPanel({
   clearAll,
   reorderLine,
   predict,
+  suggestCheaperLine,
 }: Props) {
-  const { mode, drawnLine, loading, prediction, validationError, trainService } = state
+  const { mode, drawnLine, loading, prediction, suggestionSummary, validationError, trainService } = state
   const scrollRef = useRef<HTMLDivElement>(null)
   const sensors = useSensors(useSensor(PointerSensor))
 
@@ -518,6 +520,23 @@ export default function LeftPanel({
             'Predict Impact'
           )}
         </button>
+        <button
+          onClick={suggestCheaperLine}
+          disabled={!canPredict}
+          className={`mt-3 flex w-full items-center justify-center gap-2 rounded-2xl border px-4 py-3 text-sm font-semibold transition-all ${
+            canPredict
+              ? 'border-emerald-300/28 bg-emerald-500/[0.08] text-emerald-200 hover:bg-emerald-500/[0.14]'
+              : 'cursor-not-allowed border-slate-700/80 bg-slate-900/70 text-slate-500'
+          }`}
+        >
+          Suggest Cheaper Line
+        </button>
+        {suggestionSummary && (
+          <div className="mt-3 rounded-2xl border border-emerald-300/22 bg-emerald-500/[0.08] px-3 py-3">
+            <p className="text-[10px] uppercase tracking-[0.18em] text-emerald-300">Why Suggested</p>
+            <p className="mt-1 text-xs leading-relaxed text-emerald-100">{suggestionSummary}</p>
+          </div>
+        )}
       </div>
     </aside>
   )
