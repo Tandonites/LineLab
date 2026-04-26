@@ -16,7 +16,6 @@ import {
 import { CSS } from '@dnd-kit/utilities'
 import type { AppState, DrawnStation, Mode, Prediction, TrainService } from '../App'
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
 function haversineKm(a: DrawnStation, b: DrawnStation): number {
   const R = 6371
   const dLat = ((b.lat - a.lat) * Math.PI) / 180
@@ -31,7 +30,7 @@ function haversineKm(a: DrawnStation, b: DrawnStation): number {
 
 function totalKm(line: DrawnStation[]): number {
   let km = 0
-  for (let i = 1; i < line.length; i++) km += haversineKm(line[i - 1], line[i])
+  for (let i = 1; i < line.length; i += 1) km += haversineKm(line[i - 1], line[i])
   return km
 }
 
@@ -41,20 +40,26 @@ function fmtCost(n: number): string {
   return `$${n.toFixed(0)}`
 }
 
-const SERVICE_RULE_COPY: Record<TrainService, { min: string; max: string; description: string }> = {
+const SERVICE_RULE_COPY: Record<
+  TrainService,
+  { min: string; max: string; description: string; chip: string; glow: string }
+> = {
   local: {
     min: '0.2 mi',
-    max: '0.5 mi',
-    description: 'Frequent stops through dense neighborhoods.',
+    max: '0.75 mi',
+    description: 'Frequent neighborhood stops with tighter spacing.',
+    chip: 'bg-cyan-400/18 text-cyan-100 ring-cyan-300/25',
+    glow: 'from-cyan-400 via-sky-500 to-blue-600',
   },
   express: {
     min: '0.5 mi',
     max: '3.0 mi',
     description: 'Longer spacing for faster cross-borough travel.',
+    chip: 'bg-orange-400/18 text-orange-100 ring-orange-300/25',
+    glow: 'from-orange-400 via-orange-500 to-amber-500',
   },
 }
 
-// ── Sortable station row ──────────────────────────────────────────────────────
 function SortableStationRow({
   station,
   index,
@@ -70,20 +75,19 @@ function SortableStationRow({
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
-    opacity: isDragging ? 0.5 : 1,
+    opacity: isDragging ? 0.55 : 1,
   }
 
   return (
     <div
       ref={setNodeRef}
       style={style}
-      className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-[#1a1d27] border border-gray-700/50 group"
+      className="group flex items-center gap-3 rounded-2xl border border-white/8 bg-[linear-gradient(180deg,rgba(20,25,37,0.98),rgba(13,16,25,0.96))] px-3 py-3 shadow-[0_12px_24px_rgba(0,0,0,0.18)] transition-colors hover:border-white/14"
     >
-      {/* Drag handle */}
       <button
         {...attributes}
         {...listeners}
-        className="text-gray-600 hover:text-gray-400 cursor-grab active:cursor-grabbing touch-none"
+        className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-white/5 text-slate-500 transition-colors hover:bg-white/8 hover:text-slate-200"
       >
         <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor">
           <rect x="2" y="3" width="10" height="1.5" rx="0.75" />
@@ -91,20 +95,27 @@ function SortableStationRow({
           <rect x="2" y="9.5" width="10" height="1.5" rx="0.75" />
         </svg>
       </button>
-      <span className="text-gray-500 text-xs w-4 shrink-0">{index + 1}</span>
-      <span className="text-white text-xs flex-1 truncate">{station.name}</span>
+      <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full border border-white/10 bg-white/[0.04] text-xs font-semibold text-slate-300">
+        {index + 1}
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium text-white">{station.name}</p>
+        <p className="mt-0.5 text-[11px] uppercase tracking-[0.18em] text-slate-500">
+          {station.isNew ? 'Custom stop' : 'Existing station'}
+        </p>
+      </div>
       <span
-        className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${
+        className={`rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] ring-1 ${
           station.isNew
-            ? 'bg-orange-900/60 text-orange-300'
-            : 'bg-emerald-900/60 text-emerald-300'
+            ? 'bg-orange-400/18 text-orange-100 ring-orange-300/25'
+            : 'bg-emerald-400/18 text-emerald-100 ring-emerald-300/25'
         }`}
       >
-        {station.isNew ? 'new' : 'existing'}
+        {station.isNew ? 'new' : 'live'}
       </span>
       <button
         onClick={() => onRemove(station.id)}
-        className="text-gray-600 hover:text-red-400 ml-1 transition-colors"
+        className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-slate-500 transition-colors hover:bg-red-500/12 hover:text-red-300"
       >
         ✕
       </button>
@@ -112,127 +123,132 @@ function SortableStationRow({
   )
 }
 
-// ── Results section ───────────────────────────────────────────────────────────
+function MetricCard({
+  label,
+  value,
+  detail,
+  gradient,
+}: {
+  label: string
+  value: string
+  detail: string
+  gradient: string
+}) {
+  return (
+    <div className="relative overflow-hidden rounded-[1.35rem] border border-white/8 bg-[linear-gradient(180deg,rgba(18,23,34,0.98),rgba(11,14,22,0.98))] p-4 shadow-[0_18px_38px_rgba(0,0,0,0.24)]">
+      <div className={`absolute inset-x-0 top-0 h-1 bg-gradient-to-r ${gradient}`} />
+      <p className="text-[11px] uppercase tracking-[0.22em] text-slate-500">{label}</p>
+      <p className="mt-3 text-3xl font-semibold tracking-tight text-white">{value}</p>
+      <p className="mt-2 text-xs leading-relaxed text-slate-400">{detail}</p>
+    </div>
+  )
+}
+
 function ResultsPanel({ prediction }: { prediction: Prediction }) {
   const maxLineDelta = Math.max(
-    ...prediction.affected_lines.map(l => Math.abs(l.delta_pct)),
+    ...prediction.affected_lines.map(line => Math.abs(line.delta_pct)),
     1
   )
 
   return (
-    <div className="space-y-3">
-      <div className="border-t border-gray-700 pt-4">
-        <p className="text-gray-400 text-xs uppercase tracking-widest mb-3 font-medium">
-          Simulation Results
-        </p>
+    <div className="space-y-4">
+      <div className="flex items-end justify-between">
+        <div>
+          <p className="text-[11px] uppercase tracking-[0.22em] text-slate-500">Simulation Results</p>
+          <h3 className="mt-1 text-lg font-semibold tracking-tight text-white">Impact Snapshot</h3>
+        </div>
       </div>
 
-      {/* New line ridership */}
-      <div className="bg-[#1a1d27] border-l-4 border-blue-500 rounded-r-xl p-3">
-        <p className="text-gray-400 text-xs mb-1">New Line Ridership</p>
-        <p className="text-white text-2xl font-bold">
-          {prediction.new_line_ridership.toLocaleString()}
-        </p>
-        <p className="text-gray-500 text-xs mt-0.5">
-          daily riders · peak hour:{' '}
-          <span className="text-gray-300">
-            {prediction.peak_hour_ridership.toLocaleString()}
-          </span>
-        </p>
-      </div>
-
-      {/* Operational cost */}
-      <div className="bg-[#1a1d27] border-l-4 border-yellow-500 rounded-r-xl p-3">
-        <p className="text-gray-400 text-xs mb-1">Operational Cost</p>
-        <p className="text-white text-2xl font-bold">
-          {fmtCost(prediction.operational_cost_daily)}
-        </p>
-        <p className="text-gray-500 text-xs mt-0.5">estimated daily operating cost</p>
+      <div className="grid gap-3">
+        <MetricCard
+          label="Projected Ridership"
+          value={prediction.new_line_ridership.toLocaleString()}
+          detail={`Daily riders · peak hour ${prediction.peak_hour_ridership.toLocaleString()}`}
+          gradient="from-cyan-400 via-sky-500 to-blue-600"
+        />
+        <MetricCard
+          label="Operating Cost"
+          value={fmtCost(prediction.operational_cost_daily)}
+          detail="Estimated daily operating cost for the proposed service pattern."
+          gradient="from-amber-300 via-orange-400 to-orange-500"
+        />
       </div>
 
       {prediction.route_comparison?.available && (
-        <div className="bg-[#1a1d27] border-l-4 border-violet-500 rounded-r-xl p-3">
-          <p className="text-gray-400 text-xs mb-2">Route Comparison</p>
-          <div className="grid grid-cols-2 gap-2">
-            <div className="rounded-lg bg-[#141723] px-3 py-2">
-              <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">
-                Existing Fastest
-              </p>
-              <p className="mt-1 text-[11px] text-gray-400">
-                {prediction.route_comparison.origin_name} to {prediction.route_comparison.destination_name}
-              </p>
-              <div className="mt-2 space-y-1.5 text-sm text-white">
+        <div className="overflow-hidden rounded-[1.45rem] border border-white/8 bg-[linear-gradient(180deg,rgba(19,22,35,0.98),rgba(11,14,23,0.98))] shadow-[0_20px_42px_rgba(0,0,0,0.28)]">
+          <div className="border-b border-white/8 px-4 py-3">
+            <p className="text-[11px] uppercase tracking-[0.22em] text-slate-500">Travel Time Comparison</p>
+            <h4 className="mt-1 text-base font-semibold text-white">
+              {prediction.route_comparison.origin_name} to {prediction.route_comparison.destination_name}
+            </h4>
+          </div>
+          <div className="grid gap-3 p-4 lg:grid-cols-2">
+            <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-4">
+              <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Existing Fastest</p>
+              <div className="mt-3 space-y-2 text-sm leading-relaxed text-slate-200">
                 <p>
-                  Take the <span className="font-semibold text-sky-300">{prediction.route_comparison.first_train}</span> train
+                  Board the <span className="font-semibold text-cyan-300">{prediction.route_comparison.first_train}</span> train
                 </p>
                 {prediction.route_comparison.transfer_station && prediction.route_comparison.second_train ? (
                   <>
                     <p>
-                      Transfer at <span className="font-semibold">{prediction.route_comparison.transfer_station}</span>
+                      Transfer at <span className="font-semibold text-white">{prediction.route_comparison.transfer_station}</span>
                     </p>
                     <p>
-                      Continue on the <span className="font-semibold text-sky-300">{prediction.route_comparison.second_train}</span> train
+                      Continue on the <span className="font-semibold text-cyan-300">{prediction.route_comparison.second_train}</span> train
                     </p>
                   </>
                 ) : (
-                  <p className="text-emerald-300">
-                    Direct ride, no transfer needed
-                  </p>
+                  <p className="text-emerald-300">Direct ride with no transfer.</p>
                 )}
               </div>
-              <p className="mt-1 text-xl font-bold text-gray-100">
+              <p className="mt-4 text-3xl font-semibold tracking-tight text-white">
                 {prediction.route_comparison.existing_travel_minutes} min
               </p>
             </div>
-            <div className="rounded-lg bg-[#141723] px-3 py-2">
-              <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">
-                Proposed Line
+
+            <div className="rounded-2xl border border-cyan-300/14 bg-[linear-gradient(180deg,rgba(18,36,54,0.44),rgba(12,19,32,0.34))] p-4">
+              <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Proposed Corridor</p>
+              <p className="mt-3 text-sm leading-relaxed text-slate-200">
+                Direct service from <span className="font-semibold text-white">{prediction.route_comparison.origin_name}</span> to{' '}
+                <span className="font-semibold text-white">{prediction.route_comparison.destination_name}</span>.
               </p>
-              <p className="mt-1 text-sm font-semibold text-sky-300">
-                New corridor
-              </p>
-              <p className="mt-2 text-sm text-white">
-                Direct service from <span className="font-semibold">{prediction.route_comparison.origin_name}</span> to{' '}
-                <span className="font-semibold">{prediction.route_comparison.destination_name}</span>
-              </p>
-              <p className="mt-1 text-xl font-bold text-white">
+              <p className="mt-4 text-3xl font-semibold tracking-tight text-white">
                 {prediction.route_comparison.new_route_minutes} min
               </p>
+              <div className="mt-3 inline-flex rounded-full border border-emerald-300/18 bg-emerald-400/10 px-3 py-1 text-[11px] font-semibold text-emerald-200">
+                Saves about {prediction.route_comparison.time_saved_minutes} minutes
+              </div>
             </div>
           </div>
-          <p className="mt-2 text-xs text-emerald-300">
-            Saves about {prediction.route_comparison.time_saved_minutes} minutes versus today.
-          </p>
         </div>
       )}
 
-      {/* Affected lines */}
       {prediction.affected_lines.length > 0 && (
-        <div className="bg-[#1a1d27] border-l-4 border-red-500 rounded-r-xl p-3">
-          <p className="text-gray-400 text-xs mb-2">Most Affected Lines</p>
-          <div className="space-y-2">
-            {prediction.affected_lines.slice(0, 5).map(l => {
-              const positive = l.delta_pct >= 0
-              const barPct = (Math.abs(l.delta_pct) / maxLineDelta) * 100
+        <div className="rounded-[1.35rem] border border-white/8 bg-[linear-gradient(180deg,rgba(18,22,34,0.96),rgba(11,14,22,0.98))] p-4 shadow-[0_18px_38px_rgba(0,0,0,0.24)]">
+          <div className="mb-4">
+            <p className="text-[11px] uppercase tracking-[0.22em] text-slate-500">Network Response</p>
+            <h4 className="mt-1 text-base font-semibold text-white">Most Affected Lines</h4>
+          </div>
+          <div className="space-y-3">
+            {prediction.affected_lines.slice(0, 5).map(line => {
+              const positive = line.delta_pct >= 0
+              const barPct = (Math.abs(line.delta_pct) / maxLineDelta) * 100
               return (
-                <div key={l.line}>
-                  <div className="flex justify-between items-center mb-0.5">
-                    <span className="text-white text-xs font-semibold">
-                      {l.line} train
-                    </span>
-                    <span
-                      className={`text-xs font-medium ${
-                        positive ? 'text-emerald-400' : 'text-red-400'
-                      }`}
-                    >
+                <div key={line.line} className="rounded-2xl border border-white/6 bg-white/[0.03] px-3 py-3">
+                  <div className="mb-2 flex items-center justify-between">
+                    <span className="text-sm font-medium text-white">{line.line} train</span>
+                    <span className={`text-sm font-semibold ${positive ? 'text-emerald-300' : 'text-rose-300'}`}>
                       {positive ? '+' : ''}
-                      {l.delta_pct.toFixed(1)}%
+                      {line.delta_pct.toFixed(1)}%
                     </span>
                   </div>
-                  <div className="h-1 w-full bg-gray-700 rounded-full overflow-hidden">
+                  <div className="h-2 overflow-hidden rounded-full bg-slate-800">
                     <div
                       className={`h-full rounded-full ${
-                        positive ? 'bg-emerald-500' : 'bg-red-500'
+                        positive
+                          ? 'bg-[linear-gradient(90deg,#10b981,#34d399)]'
+                          : 'bg-[linear-gradient(90deg,#ef4444,#fb7185)]'
                       }`}
                       style={{ width: `${barPct}%` }}
                     />
@@ -247,7 +263,6 @@ function ResultsPanel({ prediction }: { prediction: Prediction }) {
   )
 }
 
-// ── Props ─────────────────────────────────────────────────────────────────────
 interface Props {
   state: AppState
   setMode: (mode: Mode) => void
@@ -259,7 +274,6 @@ interface Props {
   predict: () => void
 }
 
-// ── Main component ────────────────────────────────────────────────────────────
 export default function LeftPanel({
   state,
   setMode,
@@ -272,14 +286,13 @@ export default function LeftPanel({
 }: Props) {
   const { mode, drawnLine, loading, prediction, validationError, trainService } = state
   const scrollRef = useRef<HTMLDivElement>(null)
-
   const sensors = useSensors(useSensor(PointerSensor))
 
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event
     if (over && active.id !== over.id) {
-      const oldIdx = drawnLine.findIndex(s => s.id === active.id)
-      const newIdx = drawnLine.findIndex(s => s.id === over.id)
+      const oldIdx = drawnLine.findIndex(station => station.id === active.id)
+      const newIdx = drawnLine.findIndex(station => station.id === over.id)
       reorderLine(arrayMove(drawnLine, oldIdx, newIdx))
     }
   }
@@ -289,201 +302,215 @@ export default function LeftPanel({
   const ruleCopy = SERVICE_RULE_COPY[trainService]
 
   return (
-    <div className="w-[380px] shrink-0 h-screen bg-[#0f1117] border-r border-gray-800 flex flex-col">
-      {/* ── Header ──────────────────────────────────────────────────────────── */}
-      <div className="px-5 pt-5 pb-4 border-b border-gray-800 flex items-center gap-3 shrink-0">
-        <div className="w-8 h-8 rounded-full bg-[#EE352E] flex items-center justify-center shrink-0">
-          <span className="text-white text-[9px] font-black tracking-tight">MTA</span>
+    <aside className="relative flex h-screen w-[430px] shrink-0 flex-col overflow-hidden border-r border-white/8 bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.12),transparent_28%),radial-gradient(circle_at_top_right,rgba(249,115,22,0.1),transparent_24%),linear-gradient(180deg,#0f1320_0%,#090c13_100%)]">
+      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.03),transparent_18%,transparent_82%,rgba(255,255,255,0.02))]" />
+
+      <div className="relative border-b border-white/8 px-6 pb-5 pt-6">
+        <div className="flex items-start gap-4">
+          <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-[linear-gradient(135deg,#ef4444,#dc2626)] shadow-[0_14px_30px_rgba(239,68,68,0.34)]">
+            <span className="text-[11px] font-black uppercase tracking-[0.16em] text-white">MTA</span>
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="text-[11px] uppercase tracking-[0.28em] text-slate-500">Transit Sandbox</p>
+            <h1 className="mt-1 text-[1.9rem] font-semibold tracking-tight text-white">Corridor Studio</h1>
+            <p className="mt-2 text-sm leading-relaxed text-slate-400">
+              Sketch a new subway corridor, test stop spacing, and compare it with the existing NYC network.
+            </p>
+          </div>
         </div>
-        <div>
-          <h1 className="text-white text-[18px] font-semibold leading-tight">
-            Transit Predictor
-          </h1>
-          <p className="text-gray-400 text-[12px]">MTA New Line Simulator</p>
+
+        <div className="mt-5 grid grid-cols-3 gap-3">
+          <div className="rounded-2xl border border-white/8 bg-white/[0.04] px-3 py-3">
+            <p className="text-[10px] uppercase tracking-[0.18em] text-slate-500">Stops</p>
+            <p className="mt-2 text-xl font-semibold text-white">{drawnLine.length}</p>
+          </div>
+          <div className="rounded-2xl border border-white/8 bg-white/[0.04] px-3 py-3">
+            <p className="text-[10px] uppercase tracking-[0.18em] text-slate-500">Length</p>
+            <p className="mt-2 text-xl font-semibold text-white">{kmTotal.toFixed(1)} km</p>
+          </div>
+          <div className="rounded-2xl border border-white/8 bg-white/[0.04] px-3 py-3">
+            <p className="text-[10px] uppercase tracking-[0.18em] text-slate-500">Pattern</p>
+            <p className="mt-2 text-xl font-semibold capitalize text-white">{trainService}</p>
+          </div>
         </div>
       </div>
 
-      {/* ── Mode toggle ─────────────────────────────────────────────────────── */}
-      <div className="px-4 pt-4 shrink-0">
-        <div className="flex gap-2 bg-[#1a1d27] p-1 rounded-xl">
+      <div className="relative px-6 pt-5">
+        <div className="grid grid-cols-2 rounded-2xl border border-white/8 bg-black/18 p-1.5">
           <button
             onClick={() => setMode('draw')}
-            className={`flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+            className={`rounded-[1rem] px-4 py-3 text-sm font-semibold transition-all ${
               mode === 'draw'
-                ? 'bg-blue-600 text-white shadow'
-                : 'text-gray-400 hover:text-gray-200'
+                ? 'bg-[linear-gradient(135deg,#38bdf8,#2563eb)] text-white shadow-[0_14px_30px_rgba(37,99,235,0.34)]'
+                : 'text-slate-400 hover:text-slate-200'
             }`}
           >
-            Draw Line
+            Build Line
           </button>
           <button
             onClick={() => prediction && setMode('results')}
             disabled={!prediction}
-            className={`flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+            className={`rounded-[1rem] px-4 py-3 text-sm font-semibold transition-all ${
               mode === 'results'
-                ? 'bg-blue-600 text-white shadow'
+                ? 'bg-[linear-gradient(135deg,#10b981,#0891b2)] text-white shadow-[0_14px_30px_rgba(16,185,129,0.24)]'
                 : prediction
-                ? 'text-gray-400 hover:text-gray-200'
-                : 'text-gray-600 cursor-not-allowed'
+                  ? 'text-slate-400 hover:text-slate-200'
+                  : 'cursor-not-allowed text-slate-600'
             }`}
           >
-            View Results
+            Analyze Impact
           </button>
         </div>
       </div>
 
-      {/* ── Scrollable body ─────────────────────────────────────────────────── */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
-        {/* Instructions card */}
-        <div className="bg-[#1a1d27] border border-gray-700/50 rounded-xl p-3 text-xs text-gray-300 leading-relaxed">
-          {drawnLine.length === 0 ? (
-            <>
-              Left click an existing station marker to add it to your line.
-              Right click anywhere on the map to place a new station.
-              Press <kbd className="bg-gray-700 px-1 rounded">Undo</kbd> to remove the last point.
-            </>
-          ) : (
-            <>
-              <span className="text-white font-medium">{drawnLine.length} station{drawnLine.length !== 1 ? 's' : ''}</span>
-              {drawnLine.length >= 2 && (
-                <> · <span className="text-blue-400">{kmTotal.toFixed(1)} km</span> total route length</>
-              )}
-              <br />
-              Drag to reorder. Click ✕ to remove a station.
-            </>
-          )}
-        </div>
+      <div ref={scrollRef} className="relative flex-1 space-y-4 overflow-y-auto px-6 pb-6 pt-5">
+        <section className="rounded-[1.5rem] border border-white/8 bg-[linear-gradient(180deg,rgba(18,22,34,0.96),rgba(11,14,22,0.96))] p-4 shadow-[0_18px_38px_rgba(0,0,0,0.22)]">
+          <p className="text-[11px] uppercase tracking-[0.22em] text-slate-500">Build Instructions</p>
+          <div className="mt-3 space-y-2 text-sm leading-relaxed text-slate-300">
+            {drawnLine.length === 0 ? (
+              <>
+                <p>Click an existing NYC station marker to add it to your corridor.</p>
+                <p>Right-click within the NYC map area to place a custom station.</p>
+                <p>Use the spacing rings to keep the proposed route feasible.</p>
+              </>
+            ) : (
+              <>
+                <p>
+                  Current alignment has <span className="font-semibold text-white">{drawnLine.length} stops</span>{' '}
+                  across <span className="font-semibold text-white">{kmTotal.toFixed(1)} km</span>.
+                </p>
+                <p>Drag rows to reorder or remove a stop to test alternate alignments.</p>
+                <p className="text-slate-400">
+                  {trainService} service requires each segment to stay between {ruleCopy.min} and {ruleCopy.max}.
+                </p>
+              </>
+            )}
+          </div>
+        </section>
 
-        <div className="rounded-xl border border-gray-700/50 bg-[#1a1d27] p-3">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-400">
-            Service Pattern
-          </p>
-          <div className="mt-3 flex gap-2">
+        <section className="rounded-[1.5rem] border border-white/8 bg-[linear-gradient(180deg,rgba(18,22,34,0.96),rgba(11,14,22,0.98))] p-4 shadow-[0_18px_38px_rgba(0,0,0,0.22)]">
+          <p className="text-[11px] uppercase tracking-[0.22em] text-slate-500">Service Pattern</p>
+          <h3 className="mt-1 text-lg font-semibold text-white">Operating style</h3>
+          <div className="mt-4 grid grid-cols-2 gap-3">
             <button
               onClick={() => setTrainService('local')}
-              className={`flex-1 rounded-xl px-3 py-2 text-left transition-colors ${
+              className={`rounded-[1.2rem] border px-4 py-4 text-left transition-all ${
                 trainService === 'local'
-                  ? 'bg-sky-600 text-white'
-                  : 'bg-[#141723] text-gray-300 hover:bg-[#1a1f30]'
+                  ? 'border-cyan-300/18 bg-[linear-gradient(135deg,rgba(34,211,238,0.26),rgba(37,99,235,0.18))] shadow-[0_14px_30px_rgba(37,99,235,0.18)]'
+                  : 'border-white/8 bg-white/[0.03] hover:border-white/14'
               }`}
             >
-              <p className="text-xs font-semibold">Local</p>
-              <p className="mt-1 text-[11px] opacity-90">0.2 to 0.5 mi</p>
+              <div className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] ring-1 ${trainService === 'local' ? 'bg-white/14 text-white ring-white/10' : 'bg-white/8 text-slate-400 ring-white/8'}`}>
+                Local
+              </div>
+              <p className="mt-4 text-sm font-medium text-white">Neighborhood coverage</p>
+              <p className="mt-1 text-sm text-slate-400">0.2 to 0.75 miles between stops</p>
             </button>
             <button
               onClick={() => setTrainService('express')}
-              className={`flex-1 rounded-xl px-3 py-2 text-left transition-colors ${
+              className={`rounded-[1.2rem] border px-4 py-4 text-left transition-all ${
                 trainService === 'express'
-                  ? 'bg-orange-600 text-white'
-                  : 'bg-[#141723] text-gray-300 hover:bg-[#1a1f30]'
+                  ? 'border-orange-300/18 bg-[linear-gradient(135deg,rgba(251,146,60,0.24),rgba(234,88,12,0.16))] shadow-[0_14px_30px_rgba(249,115,22,0.16)]'
+                  : 'border-white/8 bg-white/[0.03] hover:border-white/14'
               }`}
             >
-              <p className="text-xs font-semibold">Express</p>
-              <p className="mt-1 text-[11px] opacity-90">0.5 to 3.0 mi</p>
+              <div className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] ring-1 ${trainService === 'express' ? 'bg-white/14 text-white ring-white/10' : 'bg-white/8 text-slate-400 ring-white/8'}`}>
+                Express
+              </div>
+              <p className="mt-4 text-sm font-medium text-white">Fast cross-borough service</p>
+              <p className="mt-1 text-sm text-slate-400">0.5 to 3.0 miles between stops</p>
             </button>
           </div>
-          <p className="mt-3 text-xs leading-relaxed text-gray-400">
-            {ruleCopy.description} Adjacent stops must stay between{' '}
-            <span className="font-semibold text-gray-200">{ruleCopy.min}</span> and{' '}
-            <span className="font-semibold text-gray-200">{ruleCopy.max}</span>.
-          </p>
-        </div>
+          <div className={`mt-4 inline-flex rounded-full px-3 py-1 text-[11px] font-semibold ring-1 ${ruleCopy.chip}`}>
+            Valid spacing: {ruleCopy.min} to {ruleCopy.max}
+          </div>
+          <p className="mt-3 text-sm leading-relaxed text-slate-400">{ruleCopy.description}</p>
+        </section>
 
         {validationError && (
-          <div className="rounded-xl border border-amber-700/60 bg-amber-950/40 p-3 text-xs leading-relaxed text-amber-100">
-            <p className="font-semibold uppercase tracking-[0.16em] text-amber-300">
-              Stop Spacing Rule
-            </p>
-            <p className="mt-1">
-              {validationError}
-            </p>
-          </div>
+          <section className="rounded-[1.4rem] border border-amber-300/18 bg-[linear-gradient(180deg,rgba(120,53,15,0.24),rgba(69,26,3,0.28))] p-4 shadow-[0_18px_36px_rgba(120,53,15,0.16)]">
+            <p className="text-[11px] uppercase tracking-[0.22em] text-amber-300">Spacing Conflict</p>
+            <p className="mt-2 text-sm leading-relaxed text-amber-100">{validationError}</p>
+          </section>
         )}
 
-        {/* Station list */}
         {drawnLine.length > 0 && (
-          <DndContext
-            sensors={sensors}
-            collisionDetection={closestCenter}
-            onDragEnd={handleDragEnd}
-          >
-            <SortableContext
-              items={drawnLine.map(s => s.id)}
-              strategy={verticalListSortingStrategy}
-            >
-              <div className="space-y-1.5">
-                {drawnLine.map((station, i) => (
-                  <SortableStationRow
-                    key={station.id}
-                    station={station}
-                    index={i}
-                    onRemove={removeStation}
-                  />
-                ))}
+          <section className="rounded-[1.5rem] border border-white/8 bg-[linear-gradient(180deg,rgba(18,22,34,0.98),rgba(10,13,20,0.98))] p-4 shadow-[0_20px_42px_rgba(0,0,0,0.24)]">
+            <div className="mb-4 flex items-end justify-between">
+              <div>
+                <p className="text-[11px] uppercase tracking-[0.22em] text-slate-500">Line Assembly</p>
+                <h3 className="mt-1 text-lg font-semibold text-white">Stop Sequence</h3>
               </div>
-            </SortableContext>
-          </DndContext>
+              <p className="text-xs text-slate-500">Drag to reorder</p>
+            </div>
+
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+              <SortableContext items={drawnLine.map(station => station.id)} strategy={verticalListSortingStrategy}>
+                <div className="space-y-2.5">
+                  {drawnLine.map((station, index) => (
+                    <SortableStationRow
+                      key={station.id}
+                      station={station}
+                      index={index}
+                      onRemove={removeStation}
+                    />
+                  ))}
+                </div>
+              </SortableContext>
+            </DndContext>
+          </section>
         )}
 
-        {/* Results */}
         {mode === 'results' && prediction && (
-          <div
-            className="overflow-hidden transition-all duration-300"
-            style={{ maxHeight: prediction ? 9999 : 0 }}
-          >
+          <section className="rounded-[1.55rem] border border-white/8 bg-[linear-gradient(180deg,rgba(14,18,27,0.98),rgba(8,11,18,0.98))] p-4 shadow-[0_22px_48px_rgba(0,0,0,0.28)]">
             <ResultsPanel prediction={prediction} />
-          </div>
+          </section>
         )}
       </div>
 
-      {/* ── Action buttons ───────────────────────────────────────────────────── */}
-      <div className="px-4 pb-5 pt-3 border-t border-gray-800 space-y-2 shrink-0">
-        <div className="flex gap-2">
+      <div className="relative border-t border-white/8 bg-[linear-gradient(180deg,rgba(11,13,21,0.84),rgba(8,10,16,0.98))] px-6 pb-6 pt-5">
+        <div className="grid grid-cols-2 gap-3">
           <button
             onClick={undoLast}
             disabled={drawnLine.length === 0}
-            className="flex-1 py-2 rounded-xl text-xs font-medium bg-[#1a1d27] text-gray-300 hover:bg-[#2a2d3a] disabled:opacity-40 disabled:cursor-not-allowed border border-gray-700 transition-colors"
+            className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm font-medium text-slate-200 transition-colors hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-35"
           >
             Undo Last
           </button>
           <button
             onClick={clearAll}
             disabled={drawnLine.length === 0 && !prediction}
-            className="flex-1 py-2 rounded-xl text-xs font-medium border border-red-800 text-red-400 hover:bg-red-900/20 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            className="rounded-2xl border border-red-300/18 bg-red-500/[0.04] px-4 py-3 text-sm font-medium text-rose-300 transition-colors hover:bg-red-500/[0.1] disabled:cursor-not-allowed disabled:opacity-35"
           >
-            Clear All
+            Clear Line
           </button>
         </div>
         <button
           onClick={predict}
           disabled={!canPredict}
-          className={`w-full py-2.5 rounded-xl text-sm font-semibold transition-all flex items-center justify-center gap-2 ${
+          className={`mt-3 flex w-full items-center justify-center gap-2 rounded-2xl px-4 py-4 text-base font-semibold transition-all ${
             canPredict
-              ? 'bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-900/40'
-              : 'bg-blue-900/30 text-blue-400/40 cursor-not-allowed'
+              ? trainService === 'local'
+                ? 'bg-[linear-gradient(135deg,#22d3ee,#2563eb)] text-white shadow-[0_18px_40px_rgba(37,99,235,0.26)] hover:scale-[1.01]'
+                : 'bg-[linear-gradient(135deg,#fb923c,#ea580c)] text-white shadow-[0_18px_40px_rgba(249,115,22,0.24)] hover:scale-[1.01]'
+              : 'cursor-not-allowed bg-slate-800/80 text-slate-500'
           }`}
         >
           {loading ? (
             <>
-              <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
-                <circle
-                  className="opacity-25"
-                  cx="12" cy="12" r="10"
-                  stroke="currentColor" strokeWidth="4"
-                />
-                <path
-                  className="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8v8H4z"
-                />
+              <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
               </svg>
-              Predicting…
+              Running Forecast…
             </>
+          ) : validationError ? (
+            'Resolve Stop Spacing'
           ) : (
-            validationError ? 'Add More Stops' : 'Predict Impact'
+            'Predict Impact'
           )}
         </button>
       </div>
-    </div>
+    </aside>
   )
 }
