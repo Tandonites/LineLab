@@ -32,6 +32,7 @@ h3>=4.0.0                  # hex grid for OD demand aggregation
 # --- Transit data ---
 gtfs-kit>=10.0.0           # parse MTA GTFS feed
 sodapy>=2.2.0              # NYC Open Data (ridership, OMNY)
+census
 
 # --- Visualization (notebooks/debug only — frontend is TS) ---
 matplotlib>=3.8.0
