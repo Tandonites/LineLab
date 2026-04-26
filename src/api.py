@@ -31,6 +31,7 @@ LINE_SUMMARY_PATH = ROOT_DIR / 'data' / 'processed' / 'line_summary.csv'
 TIME_GRAPH_PATH = ROOT_DIR / 'data' / 'processed' / 'mta_time_graph.json'
 MODELS_DIR = ROOT_DIR / 'data' / 'models'
 STATION_FEATURES_CSV = ROOT_DIR / 'data' / 'raw' / 'station_features.csv'
+GTFS_TRIPS_PATH = ROOT_DIR / 'data' / 'gtfs_subway' / 'trips.txt'
 
 
 class StationInput(BaseModel):
@@ -87,6 +88,12 @@ class StationFeature(BaseModel):
     lat: float
     lon: float
     total_ridership: int = 0
+
+DEFAULT_VALID_LINES = {
+    '1', '2', '3', '4', '5', '6', '6X', '7', '7X',
+    'A', 'B', 'C', 'D', 'E', 'F', 'FS', 'FX', 'G', 'GS', 'H',
+    'J', 'L', 'M', 'N', 'Q', 'R', 'SI', 'SIR', 'S', 'W', 'Z',
+}
 
 
 app = FastAPI(title='Highball Backend', version='0.1.0')
@@ -156,9 +163,24 @@ def load_line_totals() -> dict[str, int]:
                 continue
     return totals
 
+def load_valid_route_ids() -> set[str]:
+    """Load canonical route IDs from GTFS trips; fallback to defaults."""
+    valid = set(DEFAULT_VALID_LINES)
+    if not GTFS_TRIPS_PATH.exists():
+        return valid
+
+    with GTFS_TRIPS_PATH.open(newline='', encoding='utf-8') as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            rid = str(row.get('route_id', '')).strip()
+            if rid:
+                valid.add(rid)
+    return valid
+
 
 STATION_FEATURES = load_station_features()
 LINE_TOTALS = load_line_totals()
+VALID_ROUTE_IDS = load_valid_route_ids()
 
 
 # ── ML model loading ──────────────────────────────────────────────────────────
@@ -528,6 +550,8 @@ def simulate(payload: SimulationRequest) -> SimulationResponse:
     line_delta_sum: dict[str, int] = {}
     for station, delta, _ in top:
         for line in station.lines:
+            if line not in VALID_ROUTE_IDS:
+                continue
             line_delta_sum[line] = line_delta_sum.get(line, 0) + delta
 
     affected_lines: list[AffectedLine] = []
