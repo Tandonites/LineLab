@@ -31,6 +31,7 @@ export interface Prediction {
   new_line_ridership: number
   peak_hour_ridership: number
   operational_cost_daily: number
+  operational_cost_monthly: number
   affected_lines: { line: string; delta_pct: number }[]
   affected_stations: AffectedStation[]
   route_comparison: {

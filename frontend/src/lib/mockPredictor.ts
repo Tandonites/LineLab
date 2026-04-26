@@ -226,6 +226,7 @@ export async function generateMockPrediction(
     routeKm * (trainService === 'express' ? 240000 : 185000) +
       drawnLine.length * 22000
   )
+  const operationalCostMonthly = Math.round(operationalCostDaily * 30.4)
 
   const lineImpact = new Map<string, number>()
 
@@ -261,6 +262,7 @@ export async function generateMockPrediction(
     new_line_ridership: newLineRidership,
     peak_hour_ridership: peakHourRidership,
     operational_cost_daily: operationalCostDaily,
+    operational_cost_monthly: operationalCostMonthly,
     affected_lines: affectedLines,
     affected_stations: affectedStations,
     route_comparison: await generateMockRouteComparison(drawnLine, trainService),

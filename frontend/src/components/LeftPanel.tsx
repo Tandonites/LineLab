@@ -167,9 +167,9 @@ function ResultsPanel({ prediction }: { prediction: Prediction }) {
           gradient="from-cyan-400 via-sky-500 to-blue-600"
         />
         <MetricCard
-          label="Operating Cost"
-          value={fmtCost(prediction.operational_cost_daily)}
-          detail="Estimated daily operating cost for the proposed service pattern."
+          label="Operating Cost (Monthly)"
+          value={fmtCost(prediction.operational_cost_monthly)}
+          detail={`Estimated monthly operating cost. Daily equivalent ${fmtCost(prediction.operational_cost_daily)}.`}
           gradient="from-amber-300 via-orange-400 to-orange-500"
         />
       </div>
