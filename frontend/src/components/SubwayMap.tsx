@@ -157,6 +157,7 @@ export default function SubwayMap({
     map.getPane(RESULT_HEAT_PANE)!.style.pointerEvents = 'none'
     map.createPane(RESULT_BUBBLE_PANE)
     map.getPane(RESULT_BUBBLE_PANE)!.style.zIndex = '460'
+    map.getPane(RESULT_BUBBLE_PANE)!.style.pointerEvents = 'none'
     map.createPane(ROUTE_PANE)
     map.getPane(ROUTE_PANE)!.style.zIndex = '490'
     map.getPane(ROUTE_PANE)!.style.pointerEvents = 'none'
@@ -404,7 +405,6 @@ export default function SubwayMap({
 
       const pct = Math.abs(affected.ridership_delta) / maxAbs
       const color = impactColor(affected.ridership_delta)
-      const sign = affected.ridership_delta >= 0 ? '+' : ''
       const heatRadiusMeters = 520 + pct * 1200
       const bubbleRadius = 7 + pct * 15
 
@@ -440,10 +440,8 @@ export default function SubwayMap({
         color: '#f8fafc',
         weight: 2.4,
         opacity: 0.96,
+        interactive: false,
       })
-        .bindPopup(
-          `<div class="text-sm font-semibold">${affected.name}</div><div class="text-xs">Δ ${sign}${affected.ridership_delta.toLocaleString()} riders/day</div><div class="text-xs">(${sign}${affected.ridership_delta_pct.toFixed(1)}%)</div>`
-        )
         .addTo(map)
 
       resultHeatRef.current.push(outerGlow, innerGlow, coreGlow)

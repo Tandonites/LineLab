@@ -59,6 +59,9 @@ export interface AppState {
   loading: boolean
   prediction: Prediction | null
   suggestionSummary: string | null
+  originalLine: { drawnLine: DrawnStation[]; trainService: TrainService; prediction: Prediction | null } | null
+  suggestedLine: { drawnLine: DrawnStation[]; trainService: TrainService; prediction: Prediction; summary: string } | null
+  showingSuggestedLine: boolean
   error: string | null
   validationError: string | null
   trainService: TrainService
@@ -68,6 +71,21 @@ export interface AppState {
 interface SuggestionCandidate {
   stations: DrawnStation[]
   trainService: TrainService
+}
+
+interface ImportedStop {
+  id?: string
+  station_id?: string
+  station_complex_id?: string
+  name?: string
+  lat?: number
+  lon?: number
+  lng?: number
+  latitude?: number
+  longitude?: number
+  isNew?: boolean
+  is_new?: boolean
+  lines?: string[]
 }
 
 const SERVICE_RULES: Record<TrainService, { minMiles: number; maxMiles: number }> = {
@@ -110,6 +128,68 @@ function validateLineSpacing(
   return null
 }
 
+function normalizeTrainService(value: unknown): TrainService {
+  return value === 'express' ? 'express' : 'local'
+}
+
+function normalizeImportedLine(payload: unknown): {
+  trainService: TrainService
+  drawnLine: DrawnStation[]
+} {
+  const root = payload as
+    | {
+        train_service?: unknown
+        trainService?: unknown
+        stations?: unknown
+        stops?: unknown
+        line?: unknown
+      }
+    | ImportedStop[]
+
+  const rawStops = Array.isArray(root)
+    ? root
+    : Array.isArray(root.stations)
+      ? root.stations
+      : Array.isArray(root.stops)
+        ? root.stops
+        : Array.isArray(root.line)
+          ? root.line
+          : null
+
+  if (!rawStops || rawStops.length < 2) {
+    throw new Error('JSON must include at least two stops in `stations`, `stops`, or the root array.')
+  }
+
+  const trainService = normalizeTrainService(
+    Array.isArray(root) ? undefined : root.train_service ?? root.trainService
+  )
+
+  const drawnLine = rawStops.map((rawStop, index) => {
+    const stop = rawStop as ImportedStop
+    const lat = stop.lat ?? stop.latitude
+    const lon = stop.lon ?? stop.lng ?? stop.longitude
+
+    if (typeof lat !== 'number' || typeof lon !== 'number') {
+      throw new Error(`Stop ${index + 1} is missing numeric lat/lon coordinates.`)
+    }
+
+    return {
+      id:
+        stop.id ??
+        stop.station_complex_id ??
+        stop.station_id ??
+        `import_${index}_${lat.toFixed(5)}_${lon.toFixed(5)}`,
+      name: stop.name ?? `Imported Stop ${index + 1}`,
+      lat,
+      lon,
+      isNew: stop.isNew ?? stop.is_new ?? !(stop.station_complex_id || stop.station_id),
+      lines: Array.isArray(stop.lines) ? stop.lines.map(String) : [],
+    }
+  })
+
+  return { trainService, drawnLine }
+}
+
 export default function App() {
   const [mapVersion, setMapVersion] = useState(0)
   const [state, setState] = useState<AppState>({
@@ -119,6 +199,9 @@ export default function App() {
     loading: false,
     prediction: null,
     suggestionSummary: null,
+    originalLine: null,
+    suggestedLine: null,
+    showingSuggestedLine: false,
     error: null,
     validationError: null,
     trainService: 'local',
@@ -126,7 +209,11 @@ export default function App() {
   })
 
   const setMode = useCallback((mode: Mode) => {
-    setState(s => ({ ...s, mode }))
+    setState(s => ({
+      ...s,
+      mode,
+      showAllStations: mode === 'draw' ? true : s.showAllStations,
+    }))
   }, [])
 
   const setTrainService = useCallback((trainService: TrainService) => {
@@ -139,6 +226,9 @@ export default function App() {
         error: validationError,
         prediction: null,
         suggestionSummary: null,
+        originalLine: null,
+        suggestedLine: null,
+        showingSuggestedLine: false,
         mode: 'draw',
         showAllStations: true,
       }
@@ -157,7 +247,19 @@ export default function App() {
       if (validationError) {
         return { ...s, error: validationError, validationError }
       }
-      return { ...s, drawnLine: nextLine, validationError: null, error: null, suggestionSummary: null }
+      return {
+        ...s,
+        drawnLine: nextLine,
+        validationError: null,
+        error: null,
+        suggestionSummary: null,
+        originalLine: null,
+        suggestedLine: null,
+        showingSuggestedLine: false,
+        prediction: null,
+        mode: 'draw',
+        showAllStations: true,
+      }
     })
   }, [])
 
@@ -171,6 +273,12 @@ export default function App() {
         validationError,
         error: validationError,
         suggestionSummary: null,
+        originalLine: null,
+        suggestedLine: null,
+        showingSuggestedLine: false,
+        prediction: null,
+        mode: 'draw',
+        showAllStations: true,
       }
     })
   }, [])
@@ -185,6 +293,12 @@ export default function App() {
         validationError,
         error: validationError,
         suggestionSummary: null,
+        originalLine: null,
+        suggestedLine: null,
+        showingSuggestedLine: false,
+        prediction: null,
+        mode: 'draw',
+        showAllStations: true,
       }
     })
   }, [])
@@ -197,6 +311,9 @@ export default function App() {
       newStationDraft: null,
       prediction: null,
       suggestionSummary: null,
+      originalLine: null,
+      suggestedLine: null,
+      showingSuggestedLine: false,
       mode: 'draw',
       validationError: null,
       error: null,
@@ -210,12 +327,29 @@ export default function App() {
       if (validationError) {
         return { ...s, error: validationError, validationError }
       }
-      return { ...s, drawnLine: newOrder, validationError: null, error: null, suggestionSummary: null }
+      return {
+        ...s,
+        drawnLine: newOrder,
+        validationError: null,
+        error: null,
+        suggestionSummary: null,
+        originalLine: null,
+        suggestedLine: null,
+        showingSuggestedLine: false,
+        prediction: null,
+        mode: 'draw',
+        showAllStations: true,
+      }
     })
   }, [])
 
   const setNewStationDraft = useCallback((draft: NewStationDraft | null) => {
-    setState(s => ({ ...s, newStationDraft: draft }))
+    setState(s => ({
+      ...s,
+      newStationDraft: draft,
+      mode: draft ? 'draw' : s.mode,
+      showAllStations: draft ? true : s.showAllStations,
+    }))
   }, [])
 
   const commitNewStation = useCallback((name: string) => {
@@ -239,6 +373,12 @@ export default function App() {
           error: validationError,
           validationError,
           suggestionSummary: null,
+          originalLine: null,
+          suggestedLine: null,
+          showingSuggestedLine: false,
+          prediction: null,
+          mode: 'draw',
+          showAllStations: true,
         }
       }
       return {
@@ -248,6 +388,12 @@ export default function App() {
         validationError: null,
         error: null,
         suggestionSummary: null,
+        originalLine: null,
+        suggestedLine: null,
+        showingSuggestedLine: false,
+        prediction: null,
+        mode: 'draw',
+        showAllStations: true,
       }
     })
   }, [])
@@ -256,8 +402,8 @@ export default function App() {
     setState(s => ({ ...s, newStationDraft: null }))
   }, [])
 
-  const predict = useCallback(async () => {
-    const validationError = validateLineSpacing(state.drawnLine, state.trainService)
+  const runPrediction = useCallback(async (drawnLine: DrawnStation[], trainService: TrainService) => {
+    const validationError = validateLineSpacing(drawnLine, trainService)
     if (validationError) {
       setState(s => ({ ...s, error: validationError, validationError }))
       return
@@ -265,12 +411,18 @@ export default function App() {
 
     setState(s => ({ ...s, loading: true, error: null }))
     try {
-      const prediction = await simulateNewLine(state.drawnLine, state.trainService)
+      const prediction = await simulateNewLine(drawnLine, trainService)
       setState(s => ({
         ...s,
+        drawnLine,
+        trainService,
+        newStationDraft: null,
         loading: false,
         prediction,
         suggestionSummary: null,
+        originalLine: null,
+        suggestedLine: null,
+        showingSuggestedLine: false,
         mode: 'results',
         validationError: null,
         showAllStations: false,
@@ -281,11 +433,65 @@ export default function App() {
         loading: false,
         prediction: null,
         suggestionSummary: null,
+        originalLine: null,
+        suggestedLine: null,
+        showingSuggestedLine: false,
         mode: 'draw',
         error: 'Prediction failed — backend unavailable or returned invalid data.',
         showAllStations: true,
       }))
     }
+  }, [])
+
+  const predict = useCallback(async () => {
+    await runPrediction(state.drawnLine, state.trainService)
+  }, [runPrediction, state.drawnLine, state.trainService])
+
+  const importJsonLine = useCallback(async (file: File) => {
+    try {
+      const rawText = await file.text()
+      const parsed = JSON.parse(rawText)
+      const { trainService, drawnLine } = normalizeImportedLine(parsed)
+      await runPrediction(drawnLine, trainService)
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : 'Unable to import that JSON file.'
+      setState(s => ({
+        ...s,
+        loading: false,
+        error: `Import failed — ${message}`,
+      }))
+    }
+  }, [runPrediction])
+
+  const exportJsonLine = useCallback(() => {
+    if (state.drawnLine.length < 2) return
+
+    const payload = {
+      train_service: state.trainService,
+      stations: state.drawnLine.map(station => ({
+        id: station.id,
+        name: station.name,
+        lat: station.lat,
+        lon: station.lon,
+        is_new: station.isNew,
+        lines: station.lines,
+      })),
+    }
+
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: 'application/json',
+    })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `linelab-${state.trainService}-${state.drawnLine.length}-stops.json`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
   }, [state.drawnLine, state.trainService])
 
   const suggestCheaperLine = useCallback(async () => {
@@ -361,18 +567,29 @@ export default function App() {
         return
       }
 
-      const evaluated = await Promise.all(
-        candidates.map(async candidate => {
-          try {
-            const prediction = await simulateNewLine(candidate.stations, candidate.trainService)
-            return { ...candidate, prediction }
-          } catch {
-            return null
-          }
-        })
-      )
+      const valid: Array<SuggestionCandidate & { prediction: Prediction }> = []
+      for (const candidate of candidates) {
+        try {
+          const prediction = await simulateNewLine(candidate.stations, candidate.trainService)
+          valid.push({ ...candidate, prediction })
+        } catch (error) {
+          console.warn('Skipping cheaper-line candidate after failed simulation', {
+            candidate,
+            error,
+          })
+        }
+      }
 
-      const valid = evaluated.filter(item => item !== null)
+      if (valid.length === 0) {
+        setState(s => ({
+          ...s,
+          loading: false,
+          suggestionSummary: null,
+          error: 'Unable to evaluate alternate lines right now. Try again in a moment.',
+        }))
+        return
+      }
+
       const similarCheaper = valid
         .filter(item => {
           const ridershipRatio = item.prediction.new_line_ridership / Math.max(1, baseline.new_line_ridership)
@@ -380,7 +597,19 @@ export default function App() {
           const cheaper = item.prediction.operational_cost_monthly < baseline.operational_cost_monthly * 0.98
           return similar && cheaper
         })
-        .sort((a, b) => a.prediction.operational_cost_monthly - b.prediction.operational_cost_monthly)
+        .sort((a, b) => {
+          const costDelta =
+            a.prediction.operational_cost_monthly - b.prediction.operational_cost_monthly
+          if (costDelta !== 0) return costDelta
+
+          const aRidershipGap = Math.abs(
+            a.prediction.new_line_ridership - baseline.new_line_ridership
+          )
+          const bRidershipGap = Math.abs(
+            b.prediction.new_line_ridership - baseline.new_line_ridership
+          )
+          return aRidershipGap - bRidershipGap
+        })
 
       const best = similarCheaper[0] ?? null
 
@@ -420,6 +649,18 @@ export default function App() {
         trainService: best.trainService,
         prediction: best.prediction,
         suggestionSummary: summary,
+        originalLine: {
+          drawnLine: state.drawnLine,
+          trainService: state.trainService,
+          prediction: baseline,
+        },
+        suggestedLine: {
+          drawnLine: best.stations,
+          trainService: best.trainService,
+          prediction: best.prediction,
+          summary,
+        },
+        showingSuggestedLine: true,
         mode: 'results',
         showAllStations: false,
         validationError: null,
@@ -434,6 +675,38 @@ export default function App() {
       }))
     }
   }, [state.drawnLine, state.trainService])
+
+  const toggleSuggestedLineView = useCallback(() => {
+    setState(s => {
+      if (!s.originalLine || !s.suggestedLine) return s
+
+      if (s.showingSuggestedLine) {
+        return {
+          ...s,
+          drawnLine: s.originalLine.drawnLine,
+          trainService: s.originalLine.trainService,
+          prediction: s.originalLine.prediction,
+          suggestionSummary: null,
+          showingSuggestedLine: false,
+          mode: 'results',
+          showAllStations: false,
+          error: null,
+        }
+      }
+
+      return {
+        ...s,
+        drawnLine: s.suggestedLine.drawnLine,
+        trainService: s.suggestedLine.trainService,
+        prediction: s.suggestedLine.prediction,
+        suggestionSummary: s.suggestedLine.summary,
+        showingSuggestedLine: true,
+        mode: 'results',
+        showAllStations: false,
+        error: null,
+      }
+    })
+  }, [])
 
   const dismissError = useCallback(() => {
     setState(s => ({ ...s, error: null }))
@@ -450,7 +723,10 @@ export default function App() {
         clearAll={clearAll}
         reorderLine={reorderLine}
         predict={predict}
+        importJsonLine={importJsonLine}
+        exportJsonLine={exportJsonLine}
         suggestCheaperLine={suggestCheaperLine}
+        toggleSuggestedLineView={toggleSuggestedLineView}
       />
       <div className="flex-1 relative">
         <SubwayMap
