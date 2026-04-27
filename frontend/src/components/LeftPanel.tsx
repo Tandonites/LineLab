@@ -14,7 +14,7 @@ import {
   arrayMove,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import type { AppState, DrawnStation, Mode, Prediction, TrainService } from '../App'
+import type { AppState, DrawnStation, Prediction, TrainService } from '../App'
 
 function haversineKm(a: DrawnStation, b: DrawnStation): number {
   const R = 6371
@@ -40,24 +40,43 @@ function fmtCost(n: number): string {
   return `$${n.toFixed(0)}`
 }
 
-const SERVICE_RULE_COPY: Record<
-  TrainService,
-  { min: string; max: string; description: string; chip: string; glow: string }
-> = {
-  local: {
-    min: '0.2 mi',
-    max: '0.75 mi',
-    description: 'Frequent neighborhood stops with tighter spacing.',
-    chip: 'bg-cyan-400/18 text-cyan-100 ring-cyan-300/25',
-    glow: 'from-cyan-400 via-sky-500 to-blue-600',
-  },
-  express: {
-    min: '0.5 mi',
-    max: '3.0 mi',
-    description: 'Longer spacing for faster cross-borough travel.',
-    chip: 'bg-orange-400/18 text-orange-100 ring-orange-300/25',
-    glow: 'from-orange-400 via-orange-500 to-amber-500',
-  },
+function TrainBadge({ line }: { line: string }) {
+  return (
+    <span className="inline-flex items-center rounded-md bg-cyan-400/15 px-1.5 py-0.5 text-[11px] font-bold text-cyan-200 ring-1 ring-cyan-300/25">
+      {line}
+    </span>
+  )
+}
+
+function RouteDisplay({
+  firstTrain,
+  transferStation,
+  secondTrain,
+  isWalkingOnly,
+}: {
+  firstTrain: string
+  transferStation: string | null
+  secondTrain: string | null
+  isWalkingOnly: boolean
+}) {
+  if (isWalkingOnly) {
+    return <span className="text-xs text-amber-300">Walking only</span>
+  }
+  if (transferStation && secondTrain) {
+    return (
+      <span className="flex flex-wrap items-center gap-1 text-xs text-slate-400">
+        <TrainBadge line={firstTrain} />
+        <span>→ {transferStation} →</span>
+        <TrainBadge line={secondTrain} />
+      </span>
+    )
+  }
+  return (
+    <span className="flex items-center gap-1 text-xs text-slate-400">
+      <TrainBadge line={firstTrain} />
+      <span className="text-slate-500">Direct</span>
+    </span>
+  )
 }
 
 function SortableStationRow({
@@ -82,30 +101,25 @@ function SortableStationRow({
     <div
       ref={setNodeRef}
       style={style}
-      className="group flex items-center gap-3 rounded-2xl border border-white/8 bg-[linear-gradient(180deg,rgba(20,25,37,0.98),rgba(13,16,25,0.96))] px-3 py-3 shadow-[0_12px_24px_rgba(0,0,0,0.18)] transition-colors hover:border-white/14"
+      className="group flex items-center gap-3 rounded-2xl border border-white/8 bg-[linear-gradient(180deg,rgba(20,25,37,0.98),rgba(13,16,25,0.96))] px-3 py-2.5 shadow-[0_12px_24px_rgba(0,0,0,0.18)] transition-colors hover:border-white/14"
     >
       <button
         {...attributes}
         {...listeners}
-        className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-white/5 text-slate-500 transition-colors hover:bg-white/8 hover:text-slate-200"
+        className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-slate-600 transition-colors hover:text-slate-300"
       >
-        <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor">
+        <svg width="12" height="12" viewBox="0 0 14 14" fill="currentColor">
           <rect x="2" y="3" width="10" height="1.5" rx="0.75" />
           <rect x="2" y="6.25" width="10" height="1.5" rx="0.75" />
           <rect x="2" y="9.5" width="10" height="1.5" rx="0.75" />
         </svg>
       </button>
-      <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full border border-white/10 bg-white/[0.04] text-xs font-semibold text-slate-300">
+      <div className="grid h-7 w-7 shrink-0 place-items-center rounded-full border border-white/10 bg-white/[0.04] text-[11px] font-semibold text-slate-400">
         {index + 1}
       </div>
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium text-white">{station.name}</p>
-        <p className="mt-0.5 text-[11px] uppercase tracking-[0.18em] text-slate-500">
-          {station.isNew ? 'Custom stop' : 'Existing station'}
-        </p>
-      </div>
+      <p className="min-w-0 flex-1 truncate text-sm font-medium text-white">{station.name}</p>
       <span
-        className={`rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] ring-1 ${
+        className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] ring-1 ${
           station.isNew
             ? 'bg-orange-400/18 text-orange-100 ring-orange-300/25'
             : 'bg-emerald-400/18 text-emerald-100 ring-emerald-300/25'
@@ -115,31 +129,10 @@ function SortableStationRow({
       </span>
       <button
         onClick={() => onRemove(station.id)}
-        className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-slate-500 transition-colors hover:bg-red-500/12 hover:text-red-300"
+        className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-slate-600 transition-colors hover:bg-red-500/12 hover:text-red-300"
       >
         ✕
       </button>
-    </div>
-  )
-}
-
-function MetricCard({
-  label,
-  value,
-  detail,
-  gradient,
-}: {
-  label: string
-  value: string
-  detail: string
-  gradient: string
-}) {
-  return (
-    <div className="relative overflow-hidden rounded-[1.35rem] border border-white/8 bg-[linear-gradient(180deg,rgba(18,23,34,0.98),rgba(11,14,22,0.98))] p-4 shadow-[0_18px_38px_rgba(0,0,0,0.24)]">
-      <div className={`absolute inset-x-0 top-0 h-1 bg-gradient-to-r ${gradient}`} />
-      <p className="text-[11px] uppercase tracking-[0.22em] text-slate-500">{label}</p>
-      <p className="mt-3 text-3xl font-semibold tracking-tight text-white">{value}</p>
-      <p className="mt-2 text-xs leading-relaxed text-slate-400">{detail}</p>
     </div>
   )
 }
@@ -151,132 +144,100 @@ function ResultsPanel({ prediction }: { prediction: Prediction }) {
   )
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-end justify-between">
-        <div>
-          <p className="text-[11px] uppercase tracking-[0.22em] text-slate-500">Simulation Results</p>
-          <h3 className="mt-1 text-lg font-semibold tracking-tight text-white">Impact Snapshot</h3>
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-3">
+        <div className="relative overflow-hidden rounded-[1.2rem] border border-white/8 bg-[linear-gradient(180deg,rgba(18,23,34,0.98),rgba(11,14,22,0.98))] p-4">
+          <div className="absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r from-cyan-400 via-sky-500 to-blue-600" />
+          <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Daily Riders</p>
+          <p className="mt-2 text-2xl font-semibold tracking-tight text-white">
+            {prediction.new_line_ridership.toLocaleString()}
+          </p>
+          <p className="mt-1 text-[11px] text-slate-500">
+            peak {prediction.peak_hour_ridership.toLocaleString()}/hr
+          </p>
+        </div>
+        <div className="relative overflow-hidden rounded-[1.2rem] border border-white/8 bg-[linear-gradient(180deg,rgba(18,23,34,0.98),rgba(11,14,22,0.98))] p-4">
+          <div className="absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r from-amber-300 via-orange-400 to-orange-500" />
+          <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Monthly Cost</p>
+          <p className="mt-2 text-2xl font-semibold tracking-tight text-white">
+            {fmtCost(prediction.operational_cost_monthly)}
+          </p>
+          <p className="mt-1 text-[11px] text-slate-500">
+            daily {fmtCost(prediction.operational_cost_daily)}
+          </p>
         </div>
       </div>
 
-      <div className="grid gap-3">
-        <MetricCard
-          label="Projected Ridership"
-          value={prediction.new_line_ridership.toLocaleString()}
-          detail={`Daily riders · peak hour ${prediction.peak_hour_ridership.toLocaleString()}`}
-          gradient="from-cyan-400 via-sky-500 to-blue-600"
-        />
-        <MetricCard
-          label="Monthly Cost"
-          value={fmtCost(prediction.operational_cost_monthly)}
-          detail={`Estimated monthly operating cost. Daily equivalent ${fmtCost(prediction.operational_cost_daily)}.`}
-          gradient="from-amber-300 via-orange-400 to-orange-500"
-        />
-      </div>
-
       {prediction.route_comparison && (
-        <div className="overflow-hidden rounded-[1.45rem] border border-white/8 bg-[linear-gradient(180deg,rgba(19,22,35,0.98),rgba(11,14,23,0.98))] shadow-[0_20px_42px_rgba(0,0,0,0.28)]">
+        <div className="overflow-hidden rounded-[1.35rem] border border-white/8 bg-[linear-gradient(180deg,rgba(19,22,35,0.98),rgba(11,14,23,0.98))]">
           <div className="border-b border-white/8 px-4 py-3">
-            <p className="text-[11px] uppercase tracking-[0.22em] text-slate-500">Travel Time Comparison</p>
-            <h4 className="mt-1 text-base font-semibold text-white">
-              {prediction.route_comparison.origin_name} to {prediction.route_comparison.destination_name}
-            </h4>
-            {!prediction.route_comparison.available && (
-              <p className="mt-1 text-xs text-amber-200">
-                Existing-network timing is estimated. Proposed corridor timing is predicted for this route.
-              </p>
-            )}
+            <p className="text-xs font-medium text-slate-300">
+              {prediction.route_comparison.origin_name}
+              <span className="mx-1.5 text-slate-600">→</span>
+              {prediction.route_comparison.destination_name}
+            </p>
           </div>
-          <div className="grid gap-3 p-4 lg:grid-cols-2">
-            <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-4">
-              <div className="flex items-center gap-2">
-                <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Existing Fastest</p>
-                {prediction.route_comparison.is_walking_only && (
-                  <span className="rounded-full border border-amber-300/22 bg-amber-400/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-200">
-                    Walking only
-                  </span>
-                )}
-              </div>
-              <div className="mt-3 space-y-2 text-sm leading-relaxed text-slate-200">
-                {prediction.route_comparison.is_walking_only ? (
-                  <p className="text-amber-200">No faster transit option found — walking is the quickest current route.</p>
-                ) : (
-                  <>
-                    <p>
-                      Board the <span className="font-semibold text-cyan-300">{prediction.route_comparison.first_train}</span> train
-                    </p>
-                    {prediction.route_comparison.transfer_station && prediction.route_comparison.second_train ? (
-                      <>
-                        <p>
-                          Transfer at <span className="font-semibold text-white">{prediction.route_comparison.transfer_station}</span>
-                        </p>
-                        <p>
-                          Continue on the <span className="font-semibold text-cyan-300">{prediction.route_comparison.second_train}</span> train
-                        </p>
-                      </>
-                    ) : (
-                      <p className="text-emerald-300">Direct ride with no transfer.</p>
-                    )}
-                  </>
-                )}
-              </div>
-              <p className="mt-4 text-3xl font-semibold tracking-tight text-white">
-                {prediction.route_comparison.existing_travel_minutes} min
+          <div className="grid grid-cols-2 divide-x divide-white/8">
+            <div className="p-4">
+              <p className="text-[10px] uppercase tracking-[0.18em] text-slate-500">Existing</p>
+              <p className="mt-3 text-3xl font-semibold tracking-tight text-white">
+                {prediction.route_comparison.existing_travel_minutes}
+                <span className="ml-1 text-base font-normal text-slate-400">min</span>
               </p>
+              <div className="mt-2">
+                <RouteDisplay
+                  firstTrain={prediction.route_comparison.first_train}
+                  transferStation={prediction.route_comparison.transfer_station ?? null}
+                  secondTrain={prediction.route_comparison.second_train ?? null}
+                  isWalkingOnly={prediction.route_comparison.is_walking_only}
+                />
+              </div>
             </div>
-
-            <div className="rounded-2xl border border-cyan-300/14 bg-[linear-gradient(180deg,rgba(18,36,54,0.44),rgba(12,19,32,0.34))] p-4">
-              <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Proposed Corridor</p>
-              <p className="mt-3 text-sm leading-relaxed text-slate-200">
-                Direct service from <span className="font-semibold text-white">{prediction.route_comparison.origin_name}</span> to{' '}
-                <span className="font-semibold text-white">{prediction.route_comparison.destination_name}</span>.
+            <div className="p-4">
+              <p className="text-[10px] uppercase tracking-[0.18em] text-slate-500">Proposed</p>
+              <p className="mt-3 text-3xl font-semibold tracking-tight text-white">
+                {prediction.route_comparison.new_route_minutes}
+                <span className="ml-1 text-base font-normal text-slate-400">min</span>
               </p>
-              <p className="mt-4 text-3xl font-semibold tracking-tight text-white">
-                {prediction.route_comparison.new_route_minutes} min
-              </p>
-              {prediction.route_comparison.time_saved_minutes > 0 ? (
-                <div className="mt-3 inline-flex rounded-full border border-emerald-300/18 bg-emerald-400/10 px-3 py-1 text-[11px] font-semibold text-emerald-200">
-                  Saves about {prediction.route_comparison.time_saved_minutes} minutes
-                </div>
-              ) : (
-                <div className="mt-3 inline-flex rounded-full border border-slate-300/18 bg-slate-400/10 px-3 py-1 text-[11px] font-semibold text-slate-200">
-                  Similar travel time to current network
-                </div>
-              )}
+              <div className="mt-2">
+                {prediction.route_comparison.time_saved_minutes > 0 ? (
+                  <span className="inline-flex rounded-full bg-emerald-400/12 px-2 py-0.5 text-[11px] font-semibold text-emerald-300 ring-1 ring-emerald-300/20">
+                    −{prediction.route_comparison.time_saved_minutes} min
+                  </span>
+                ) : (
+                  <span className="text-[11px] text-slate-500">≈ same time</span>
+                )}
+              </div>
             </div>
           </div>
         </div>
       )}
 
       {prediction.affected_lines.length > 0 && (
-        <div className="rounded-[1.35rem] border border-white/8 bg-[linear-gradient(180deg,rgba(18,22,34,0.96),rgba(11,14,22,0.98))] p-4 shadow-[0_18px_38px_rgba(0,0,0,0.24)]">
-          <div className="mb-4">
-            <p className="text-[11px] uppercase tracking-[0.22em] text-slate-500">Network Response</p>
-            <h4 className="mt-1 text-base font-semibold text-white">Most Affected Lines</h4>
-          </div>
-          <div className="space-y-3">
+        <div className="rounded-[1.2rem] border border-white/8 bg-[linear-gradient(180deg,rgba(18,22,34,0.96),rgba(11,14,22,0.98))] p-4">
+          <p className="mb-3 text-[10px] uppercase tracking-[0.2em] text-slate-500">Network Impact</p>
+          <div className="space-y-2.5">
             {prediction.affected_lines.slice(0, 5).map(line => {
               const positive = line.delta_pct >= 0
               const barPct = (Math.abs(line.delta_pct) / maxLineDelta) * 100
               return (
-                <div key={line.line} className="rounded-2xl border border-white/6 bg-white/[0.03] px-3 py-3">
-                  <div className="mb-2 flex items-center justify-between">
-                    <span className="text-sm font-medium text-white">{line.line} train</span>
-                    <span className={`text-sm font-semibold ${positive ? 'text-emerald-300' : 'text-rose-300'}`}>
-                      {positive ? '+' : ''}
-                      {line.delta_pct.toFixed(1)}%
-                    </span>
+                <div key={line.line} className="flex items-center gap-3">
+                  <span className="w-8 shrink-0 text-sm font-medium text-white">{line.line}</span>
+                  <div className="flex-1">
+                    <div className="h-1.5 overflow-hidden rounded-full bg-slate-800">
+                      <div
+                        className={`h-full rounded-full ${
+                          positive
+                            ? 'bg-[linear-gradient(90deg,#10b981,#34d399)]'
+                            : 'bg-[linear-gradient(90deg,#ef4444,#fb7185)]'
+                        }`}
+                        style={{ width: `${barPct}%` }}
+                      />
+                    </div>
                   </div>
-                  <div className="h-2 overflow-hidden rounded-full bg-slate-800">
-                    <div
-                      className={`h-full rounded-full ${
-                        positive
-                          ? 'bg-[linear-gradient(90deg,#10b981,#34d399)]'
-                          : 'bg-[linear-gradient(90deg,#ef4444,#fb7185)]'
-                      }`}
-                      style={{ width: `${barPct}%` }}
-                    />
-                  </div>
+                  <span className={`w-14 text-right text-xs font-semibold ${positive ? 'text-emerald-300' : 'text-rose-300'}`}>
+                    {positive ? '+' : ''}{line.delta_pct.toFixed(1)}%
+                  </span>
                 </div>
               )
             })}
@@ -289,7 +250,6 @@ function ResultsPanel({ prediction }: { prediction: Prediction }) {
 
 interface Props {
   state: AppState
-  setMode: (mode: Mode) => void
   setTrainService: (trainService: TrainService) => void
   removeStation: (id: string) => void
   undoLast: () => void
@@ -304,7 +264,6 @@ interface Props {
 
 export default function LeftPanel({
   state,
-  setMode,
   setTrainService,
   removeStation,
   undoLast,
@@ -317,7 +276,6 @@ export default function LeftPanel({
   toggleSuggestedLineView,
 }: Props) {
   const {
-    mode,
     drawnLine,
     loading,
     prediction,
@@ -342,7 +300,6 @@ export default function LeftPanel({
 
   const canPredict = drawnLine.length >= 2 && !loading && !validationError
   const kmTotal = totalKm(drawnLine)
-  const ruleCopy = SERVICE_RULE_COPY[trainService]
 
   function handleImportChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
@@ -351,148 +308,100 @@ export default function LeftPanel({
   }
 
   return (
-    <aside className="relative flex h-screen w-[430px] shrink-0 flex-col overflow-hidden border-r border-white/8 bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.12),transparent_28%),radial-gradient(circle_at_top_right,rgba(249,115,22,0.1),transparent_24%),linear-gradient(180deg,#0f1320_0%,#090c13_100%)]">
+    <aside className="relative flex h-screen w-[400px] shrink-0 flex-col overflow-hidden border-r border-white/8 bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.12),transparent_28%),radial-gradient(circle_at_top_right,rgba(249,115,22,0.1),transparent_24%),linear-gradient(180deg,#0f1320_0%,#090c13_100%)]">
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.03),transparent_18%,transparent_82%,rgba(255,255,255,0.02))]" />
 
-      <div className="relative border-b border-white/8 px-6 pb-5 pt-6">
-        <div className="flex items-start gap-4">
-          <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-[linear-gradient(135deg,#ef4444,#dc2626)] shadow-[0_14px_30px_rgba(239,68,68,0.34)]">
-            <span className="text-[11px] font-black uppercase tracking-[0.16em] text-white">MTA</span>
+      {/* Header */}
+      <div className="relative border-b border-white/8 px-5 pb-4 pt-5">
+        <div className="flex items-center gap-3">
+          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[linear-gradient(135deg,#ef4444,#dc2626)] shadow-[0_10px_24px_rgba(239,68,68,0.30)]">
+            <span className="text-[10px] font-black uppercase tracking-[0.14em] text-white">MTA</span>
           </div>
-          <div className="min-w-0 flex-1">
-            <p className="text-[11px] uppercase tracking-[0.28em] text-slate-500">Transit Sandbox</p>
-            <h1 className="mt-1 text-[1.9rem] font-semibold tracking-tight text-white">LineLab</h1>
-            <p className="mt-2 text-sm leading-relaxed text-slate-400">
-              Sketch a new subway corridor, test stop spacing, and compare it with the existing NYC network.
-            </p>
-          </div>
+          <h1 className="text-2xl font-semibold tracking-tight text-white">LineLab</h1>
         </div>
 
-        <div className="mt-5 grid grid-cols-3 gap-3">
-          <div className="rounded-2xl border border-white/8 bg-white/[0.04] px-3 py-3">
-            <p className="text-[10px] uppercase tracking-[0.18em] text-slate-500">Stops</p>
-            <p className="mt-2 text-xl font-semibold text-white">{drawnLine.length}</p>
+        <div className="mt-4 grid grid-cols-3 gap-2">
+          <div className="rounded-xl border border-white/8 bg-white/[0.04] px-3 py-2.5">
+            <p className="text-[10px] uppercase tracking-[0.16em] text-slate-500">Stops</p>
+            <p className="mt-1 text-lg font-semibold text-white">{drawnLine.length}</p>
           </div>
-          <div className="rounded-2xl border border-white/8 bg-white/[0.04] px-3 py-3">
-            <p className="text-[10px] uppercase tracking-[0.18em] text-slate-500">Length</p>
-            <p className="mt-2 text-xl font-semibold text-white">{kmTotal.toFixed(1)} km</p>
+          <div className="rounded-xl border border-white/8 bg-white/[0.04] px-3 py-2.5">
+            <p className="text-[10px] uppercase tracking-[0.16em] text-slate-500">Length</p>
+            <p className="mt-1 text-lg font-semibold text-white">{kmTotal.toFixed(1)} km</p>
           </div>
-          <div className="rounded-2xl border border-white/8 bg-white/[0.04] px-3 py-3">
-            <p className="text-[10px] uppercase tracking-[0.18em] text-slate-500">Pattern</p>
-            <p className="mt-2 text-xl font-semibold capitalize text-white">{trainService}</p>
+          <div className="rounded-xl border border-white/8 bg-white/[0.04] px-3 py-2.5">
+            <p className="text-[10px] uppercase tracking-[0.16em] text-slate-500">Pattern</p>
+            <p className="mt-1 text-lg font-semibold capitalize text-white">{trainService}</p>
           </div>
         </div>
       </div>
 
-      <div className="relative px-6 pt-5">
-        <div className="grid grid-cols-2 rounded-2xl border border-white/8 bg-black/18 p-1.5">
-          <button
-            onClick={() => setMode('draw')}
-            className={`rounded-[1rem] px-4 py-3 text-sm font-semibold transition-all ${
-              mode === 'draw'
-                ? 'bg-[linear-gradient(135deg,#38bdf8,#2563eb)] text-white shadow-[0_14px_30px_rgba(37,99,235,0.34)]'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            Build Line
-          </button>
-          <button
-            onClick={() => prediction && setMode('results')}
-            disabled={!prediction}
-            className={`rounded-[1rem] px-4 py-3 text-sm font-semibold transition-all ${
-              mode === 'results'
-                ? 'bg-[linear-gradient(135deg,#10b981,#0891b2)] text-white shadow-[0_14px_30px_rgba(16,185,129,0.24)]'
-                : prediction
-                  ? 'text-slate-400 hover:text-slate-200'
-                  : 'cursor-not-allowed text-slate-600'
-            }`}
-          >
-            Analyze Impact
-          </button>
+
+      <div ref={scrollRef} className="relative flex-1 space-y-3 overflow-y-auto px-5 pb-5 pt-4">
+        {/* Service pattern */}
+        <div className="flex items-center gap-3 rounded-2xl border border-white/8 bg-[linear-gradient(180deg,rgba(18,22,34,0.96),rgba(11,14,22,0.98))] px-4 py-3">
+          <div className="relative grid flex-1 grid-cols-2 rounded-xl border border-white/8 bg-white/[0.04] p-1">
+            <div
+              className={`absolute inset-y-1 w-[calc(50%-4px)] rounded-[0.6rem] transition-transform duration-300 ease-out ${
+                trainService === 'local'
+                  ? 'translate-x-0 bg-[linear-gradient(135deg,rgba(34,211,238,0.34),rgba(37,99,235,0.26))]'
+                  : 'translate-x-[calc(100%+0px)] bg-[linear-gradient(135deg,rgba(251,146,60,0.3),rgba(234,88,12,0.24))]'
+              }`}
+            />
+            <button
+              onClick={() => setTrainService('local')}
+              className={`relative z-10 rounded-[0.6rem] py-1.5 text-xs font-semibold uppercase tracking-[0.16em] transition-colors ${
+                trainService === 'local' ? 'text-white' : 'text-slate-500 hover:text-slate-300'
+              }`}
+            >
+              Local
+            </button>
+            <button
+              onClick={() => setTrainService('express')}
+              className={`relative z-10 rounded-[0.6rem] py-1.5 text-xs font-semibold uppercase tracking-[0.16em] transition-colors ${
+                trainService === 'express' ? 'text-white' : 'text-slate-500 hover:text-slate-300'
+              }`}
+            >
+              Express
+            </button>
+          </div>
+          <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-semibold ring-1 ${
+            trainService === 'local'
+              ? 'bg-cyan-400/18 text-cyan-100 ring-cyan-300/25'
+              : 'bg-orange-400/18 text-orange-100 ring-orange-300/25'
+          }`}>
+            {trainService === 'local' ? '0.2–0.75 mi' : '0.5–3.0 mi'}
+          </span>
         </div>
-      </div>
-
-      <div ref={scrollRef} className="relative flex-1 space-y-4 overflow-y-auto px-6 pb-6 pt-5">
-        <section className="rounded-[1.5rem] border border-white/8 bg-[linear-gradient(180deg,rgba(18,22,34,0.96),rgba(11,14,22,0.96))] p-4 shadow-[0_18px_38px_rgba(0,0,0,0.22)]">
-          <p className="text-[11px] uppercase tracking-[0.22em] text-slate-500">Build Instructions</p>
-          <div className="mt-3 space-y-2 text-sm leading-relaxed text-slate-300">
-            {drawnLine.length === 0 ? (
-              <>
-                <p>Click an existing NYC station marker to add it to your corridor.</p>
-                <p>Right-click within the NYC map area to place a custom station.</p>
-                <p>Use the spacing rings to keep the proposed route feasible.</p>
-              </>
-            ) : (
-              <>
-                <p>
-                  Current alignment has <span className="font-semibold text-white">{drawnLine.length} stops</span>{' '}
-                  across <span className="font-semibold text-white">{kmTotal.toFixed(1)} km</span>.
-                </p>
-                <p>Drag rows to reorder or remove a stop to test alternate alignments.</p>
-                <p className="text-slate-400">
-                  {trainService} service requires each segment to stay between {ruleCopy.min} and {ruleCopy.max}.
-                </p>
-              </>
-            )}
-          </div>
-        </section>
-
-        <section className="rounded-[1.5rem] border border-white/8 bg-[linear-gradient(180deg,rgba(18,22,34,0.96),rgba(11,14,22,0.98))] p-4 shadow-[0_18px_38px_rgba(0,0,0,0.22)]">
-          <p className="text-[11px] uppercase tracking-[0.22em] text-slate-500">Service Pattern</p>
-          <h3 className="mt-1 text-lg font-semibold text-white">Operating style</h3>
-          <div className="mt-4">
-            <div className="relative grid grid-cols-2 rounded-2xl border border-white/8 bg-white/[0.04] p-1.5">
-              <div
-                className={`absolute inset-y-1.5 w-[calc(50%-6px)] rounded-[0.95rem] transition-transform duration-300 ease-out ${
-                  trainService === 'local'
-                    ? 'translate-x-0 bg-[linear-gradient(135deg,rgba(34,211,238,0.34),rgba(37,99,235,0.26))] shadow-[0_12px_26px_rgba(37,99,235,0.18)]'
-                    : 'translate-x-[calc(100%+0px)] bg-[linear-gradient(135deg,rgba(251,146,60,0.3),rgba(234,88,12,0.24))] shadow-[0_12px_26px_rgba(249,115,22,0.18)]'
-                }`}
-              />
-              <button
-                onClick={() => setTrainService('local')}
-                className={`relative z-10 rounded-[0.95rem] px-4 py-3 text-sm font-semibold uppercase tracking-[0.18em] transition-colors ${
-                  trainService === 'local' ? 'text-white' : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                Local
-              </button>
-              <button
-                onClick={() => setTrainService('express')}
-                className={`relative z-10 rounded-[0.95rem] px-4 py-3 text-sm font-semibold uppercase tracking-[0.18em] transition-colors ${
-                  trainService === 'express' ? 'text-white' : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                Express
-              </button>
-            </div>
-          </div>
-          <div className={`mt-4 inline-flex rounded-full px-3 py-1 text-[11px] font-semibold ring-1 ${ruleCopy.chip}`}>
-            Valid spacing: {ruleCopy.min} to {ruleCopy.max}
-          </div>
-          <p className="mt-3 text-sm leading-relaxed text-slate-400">{ruleCopy.description}</p>
-        </section>
 
         {validationError && (
-          <section className="rounded-[1.4rem] border border-amber-300/18 bg-[linear-gradient(180deg,rgba(120,53,15,0.24),rgba(69,26,3,0.28))] p-4 shadow-[0_18px_36px_rgba(120,53,15,0.16)]">
-            <p className="text-[11px] uppercase tracking-[0.22em] text-amber-300">Spacing Conflict</p>
-            <p className="mt-2 text-sm leading-relaxed text-amber-100">{validationError}</p>
-          </section>
+          <div className="rounded-2xl border border-amber-300/18 bg-[linear-gradient(180deg,rgba(120,53,15,0.24),rgba(69,26,3,0.28))] px-4 py-3">
+            <p className="text-[10px] uppercase tracking-[0.2em] text-amber-300">Spacing Conflict</p>
+            <p className="mt-1 text-xs leading-relaxed text-amber-100">{validationError}</p>
+          </div>
+        )}
+
+        {drawnLine.length === 0 && (
+          <div className="rounded-2xl border border-white/6 bg-white/[0.02] px-4 py-5 text-center">
+            <p className="text-sm text-slate-400">
+              <span className="font-medium text-white">Left-click</span> a station to add it to your line.
+            </p>
+            <p className="mt-2 text-sm text-slate-400">
+              <span className="font-medium text-white">Right-click</span> anywhere to place a custom stop.
+            </p>
+          </div>
         )}
 
         {drawnLine.length > 0 && (
-          <section className="rounded-[1.5rem] border border-white/8 bg-[linear-gradient(180deg,rgba(18,22,34,0.98),rgba(10,13,20,0.98))] p-4 shadow-[0_20px_42px_rgba(0,0,0,0.24)]">
-            <div className="mb-4 flex items-end justify-between">
-              <div>
-                <p className="text-[11px] uppercase tracking-[0.22em] text-slate-500">Line Assembly</p>
-                <h3 className="mt-1 text-lg font-semibold text-white">Stop Sequence</h3>
-              </div>
-              <p className="text-xs text-slate-500">Drag to reorder</p>
+          <section className="rounded-2xl border border-white/8 bg-[linear-gradient(180deg,rgba(18,22,34,0.98),rgba(10,13,20,0.98))] p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Stop Sequence</p>
+              <p className="text-[10px] text-slate-600">Drag to reorder</p>
             </div>
 
             <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
               <SortableContext items={drawnLine.map(station => station.id)} strategy={verticalListSortingStrategy}>
-                <div className="space-y-2.5">
+                <div className="space-y-2">
                   {drawnLine.map((station, index) => (
                     <SortableStationRow
                       key={station.id}
@@ -507,34 +416,36 @@ export default function LeftPanel({
           </section>
         )}
 
-        {mode === 'results' && prediction && (
-          <section className="rounded-[1.55rem] border border-white/8 bg-[linear-gradient(180deg,rgba(14,18,27,0.98),rgba(8,11,18,0.98))] p-4 shadow-[0_22px_48px_rgba(0,0,0,0.28)]">
+        {prediction && (
+          <section className="rounded-2xl border border-white/8 bg-[linear-gradient(180deg,rgba(14,18,27,0.98),rgba(8,11,18,0.98))] p-4">
             <ResultsPanel prediction={prediction} />
           </section>
         )}
       </div>
 
-      <div className="relative border-t border-white/8 bg-[linear-gradient(180deg,rgba(11,13,21,0.84),rgba(8,10,16,0.98))] px-6 pb-6 pt-5">
-        <div className="grid grid-cols-2 gap-3">
+      {/* Bottom actions */}
+      <div className="relative border-t border-white/8 bg-[linear-gradient(180deg,rgba(11,13,21,0.84),rgba(8,10,16,0.98))] px-5 pb-5 pt-4">
+        <div className="grid grid-cols-2 gap-2">
           <button
             onClick={undoLast}
             disabled={drawnLine.length === 0}
-            className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm font-medium text-slate-200 transition-colors hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-35"
+            className="rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm font-medium text-slate-300 transition-colors hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-35"
           >
-            Undo Last
+            Undo
           </button>
           <button
             onClick={clearAll}
             disabled={drawnLine.length === 0 && !prediction}
-            className="rounded-2xl border border-red-300/18 bg-red-500/[0.04] px-4 py-3 text-sm font-medium text-rose-300 transition-colors hover:bg-red-500/[0.1] disabled:cursor-not-allowed disabled:opacity-35"
+            className="rounded-xl border border-red-300/18 bg-red-500/[0.04] px-4 py-2.5 text-sm font-medium text-rose-300 transition-colors hover:bg-red-500/[0.1] disabled:cursor-not-allowed disabled:opacity-35"
           >
-            Clear Line
+            Clear
           </button>
         </div>
+
         <button
           onClick={predict}
           disabled={!canPredict}
-          className={`mt-3 flex w-full items-center justify-center gap-2 rounded-2xl px-4 py-4 text-base font-semibold transition-all ${
+          className={`mt-2 flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3.5 text-sm font-semibold transition-all ${
             canPredict
               ? trainService === 'local'
                 ? 'bg-[linear-gradient(135deg,#22d3ee,#2563eb)] text-white shadow-[0_18px_40px_rgba(37,99,235,0.26)] hover:scale-[1.01]'
@@ -548,65 +459,57 @@ export default function LeftPanel({
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
               </svg>
-              Running Forecast…
+              Running…
             </>
           ) : validationError ? (
-            'Resolve Stop Spacing'
+            'Fix Stop Spacing'
           ) : (
             'Predict Impact'
           )}
         </button>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".json,application/json"
-          className="hidden"
-          onChange={handleImportChange}
-        />
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          disabled={loading}
-          className={`mt-3 flex w-full items-center justify-center gap-2 rounded-2xl border px-4 py-3 text-sm font-semibold transition-all ${
-            loading
-              ? 'cursor-not-allowed border-slate-700/80 bg-slate-900/70 text-slate-500'
-              : 'border-cyan-300/24 bg-cyan-400/[0.08] text-cyan-100 hover:bg-cyan-400/[0.14]'
-          }`}
-        >
-          Import JSON Line
-        </button>
-        {prediction && (
+
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".json,application/json"
+            className="hidden"
+            onChange={handleImportChange}
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={loading}
+            className="rounded-xl border border-cyan-300/24 bg-cyan-400/[0.07] px-3 py-2.5 text-xs font-semibold text-cyan-200 transition-colors hover:bg-cyan-400/[0.13] disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Import JSON
+          </button>
           <button
             onClick={exportJsonLine}
-            disabled={loading}
-            className={`mt-3 flex w-full items-center justify-center gap-2 rounded-2xl border px-4 py-3 text-sm font-semibold transition-all ${
-              loading
-                ? 'cursor-not-allowed border-slate-700/80 bg-slate-900/70 text-slate-500'
-                : 'border-violet-300/24 bg-violet-400/[0.08] text-violet-100 hover:bg-violet-400/[0.14]'
-            }`}
+            disabled={loading || !prediction}
+            className="rounded-xl border border-violet-300/24 bg-violet-400/[0.07] px-3 py-2.5 text-xs font-semibold text-violet-200 transition-colors hover:bg-violet-400/[0.13] disabled:cursor-not-allowed disabled:opacity-40"
           >
             Export JSON
           </button>
-        )}
+        </div>
+
         <button
           onClick={suggestedLine ? toggleSuggestedLineView : suggestCheaperLine}
           disabled={!canPredict}
-          className={`mt-3 flex w-full items-center justify-center gap-2 rounded-2xl border px-4 py-3 text-sm font-semibold transition-all ${
+          className={`mt-2 flex w-full items-center justify-center rounded-xl border px-4 py-2.5 text-xs font-semibold transition-all ${
             canPredict
-              ? 'border-emerald-300/28 bg-emerald-500/[0.08] text-emerald-200 hover:bg-emerald-500/[0.14]'
+              ? 'border-emerald-300/28 bg-emerald-500/[0.07] text-emerald-200 hover:bg-emerald-500/[0.13]'
               : 'cursor-not-allowed border-slate-700/80 bg-slate-900/70 text-slate-500'
           }`}
         >
           {suggestedLine
             ? showingSuggestedLine
-              ? 'Show Your Line'
+              ? 'Show My Line'
               : 'Show Suggested Line'
             : 'Suggest Cheaper Line'}
         </button>
+
         {suggestionSummary && (
-          <div className="mt-3 rounded-2xl border border-emerald-300/22 bg-emerald-500/[0.08] px-3 py-3">
-            <p className="text-[10px] uppercase tracking-[0.18em] text-emerald-300">Why Suggested</p>
-            <p className="mt-1 text-xs leading-relaxed text-emerald-100">{suggestionSummary}</p>
-          </div>
+          <p className="mt-2 text-[11px] leading-relaxed text-emerald-300/80 px-1">{suggestionSummary}</p>
         )}
       </div>
     </aside>

@@ -21,6 +21,14 @@ except Exception:
     except Exception:
         _PREDICT_AVAILABLE = False
         _predict_new_line = None
+
+try:
+    from mapping import MAPPING as _STATION_MAPPING
+except Exception:
+    try:
+        from src.mapping import MAPPING as _STATION_MAPPING
+    except Exception:
+        _STATION_MAPPING = {}
 from fastapi.middleware.cors import CORSMiddleware
 from networkx.readwrite import json_graph
 from pydantic import BaseModel, Field
@@ -35,10 +43,21 @@ MONTHLY_COST_LABELS_PATH = ROOT_DIR / 'data' / 'raw' / 'monthly_operating_cost.c
 MODELS_DIR = ROOT_DIR / 'data' / 'models'
 STATION_FEATURES_CSV = ROOT_DIR / 'data' / 'raw' / 'station_features.csv'
 GTFS_TRIPS_PATH = ROOT_DIR / 'data' / 'gtfs_subway' / 'trips.txt'
+GTFS_STOP_TIMES_PATH = ROOT_DIR / 'data' / 'gtfs_subway' / 'stop_times.txt'
 TIME_MODEL_PATH = ROOT_DIR / 'data' / 'models' / 'time_model.joblib'
 
 
 logger = logging.getLogger(__name__)
+
+
+def scale_transit_minutes_non_linear(raw_minutes: float) -> int:
+    """Boost short trips, then taper into a reduction for very long trips."""
+    minutes = max(0.0, float(raw_minutes))
+    base_factor = 1.05
+    short_trip_boost = 0.60 * np.exp(-minutes / 18.0)
+    long_trip_reduction = 0.32 / (1.0 + np.exp(-(minutes - 100.0) / 10.0))
+    factor = base_factor + short_trip_boost - long_trip_reduction
+    return max(1, int(round(minutes * factor)))
 
 
 class StationInput(BaseModel):
@@ -290,9 +309,79 @@ def load_valid_route_ids() -> set[str]:
     return valid
 
 
+def load_stop_routes() -> dict[str, list[str]]:
+    """Build stop_id → sorted list of route_ids from GTFS stop_times + trips."""
+    if not GTFS_STOP_TIMES_PATH.exists() or not GTFS_TRIPS_PATH.exists():
+        return {}
+    try:
+        trip_to_route: dict[str, str] = {}
+        with GTFS_TRIPS_PATH.open(newline='', encoding='utf-8') as f:
+            for row in csv.DictReader(f):
+                trip_to_route[row['trip_id'].strip()] = row['route_id'].strip()
+
+        stop_routes: dict[str, set[str]] = {}
+        with GTFS_STOP_TIMES_PATH.open(newline='', encoding='utf-8') as f:
+            for row in csv.DictReader(f):
+                sid = row['stop_id'].strip()
+                tid = row['trip_id'].strip()
+                rid = trip_to_route.get(tid)
+                if rid:
+                    stop_routes.setdefault(sid, set()).add(rid)
+        return {k: sorted(v) for k, v in stop_routes.items()}
+    except Exception:
+        return {}
+
+
+def _format_route_label(routes: list[str]) -> str:
+    """Return a clean display label for a set of route IDs, e.g. '7' or 'N/Q/R/W'."""
+    # Deduplicate express variants (7X → 7, GS → S, FS → S)
+    seen: set[str] = set()
+    clean: list[str] = []
+    for r in routes:
+        base = r.rstrip('X').replace('GS', 'S').replace('FS', 'S')
+        if base not in seen:
+            seen.add(base)
+            clean.append(base)
+    return '/'.join(clean[:3])  # cap at 3 to avoid extremely long labels
+
+
+def _extract_path_lines(
+    path: list[str],
+    G: nx.Graph,
+    stop_routes: dict[str, list[str]],
+) -> tuple[str, str | None, str | None]:
+    """Return (first_train, transfer_station_name, second_train) from a Dijkstra path."""
+    # Collect directional nodes (those that have known route assignments)
+    seg: list[tuple[str, list[str]]] = [
+        (nid, stop_routes[nid]) for nid in path if stop_routes.get(nid)
+    ]
+    if not seg:
+        return 'Current service', None, None
+
+    first_routes = set(seg[0][1])
+    last_routes = set(seg[-1][1])
+
+    first_label = _format_route_label(seg[0][1])
+    last_label = _format_route_label(seg[-1][1])
+
+    # No transfer if the first and last share at least one route
+    if first_routes & last_routes:
+        return first_label, None, None
+
+    # Find the last node still on the first set of routes → that's where the rider leaves
+    transfer_name: str | None = None
+    for nid, routes in reversed(seg):
+        if set(routes) & first_routes:
+            transfer_name = G.nodes[nid].get('name') or nid
+            break
+
+    return first_label, transfer_name, last_label
+
+
 STATION_FEATURES = load_station_features()
 LINE_TOTALS = load_line_totals()
 VALID_ROUTE_IDS = load_valid_route_ids()
+STOP_ROUTES = load_stop_routes()
 SYSTEM_SERVICE_STATS = load_system_service_stats()
 COST_FORMULA_PARAMS = load_cost_formula_params()
 
@@ -551,10 +640,10 @@ TIME_GRAPH = load_time_graph()
 WALK_SPEED_MS = 1.4  # metres per second
 
 
-def _calculate_existing_trip(route: list[StationInput]) -> tuple[float, bool]:
+def _calculate_existing_trip(route: list[StationInput]) -> tuple[float, bool, list[str]]:
     """Replicate calculate_current_time logic using the already-loaded TIME_GRAPH.
 
-    Returns (best_time_seconds, is_walking_only).
+    Returns (best_time_seconds, is_walking_only, best_path).
     Walking-only is True when there are no existing stations in the route, or
     when straight-line walking is faster than the transit option.
     """
@@ -565,7 +654,7 @@ def _calculate_existing_trip(route: list[StationInput]) -> tuple[float, bool]:
     pure_walk_seconds = (dist_km * 1000.0) / WALK_SPEED_MS
 
     if TIME_GRAPH is None:
-        return pure_walk_seconds, True
+        return pure_walk_seconds, True, []
 
     # Two-pointer: find first and last non-new stations
     lo, hi = 0, len(route) - 1
@@ -575,7 +664,7 @@ def _calculate_existing_trip(route: list[StationInput]) -> tuple[float, bool]:
         hi -= 1
 
     if lo > hi:
-        return pure_walk_seconds, True
+        return pure_walk_seconds, True, []
 
     existing_start = route[lo]
     existing_end = route[hi]
@@ -587,28 +676,42 @@ def _calculate_existing_trip(route: list[StationInput]) -> tuple[float, bool]:
     if end.is_new:
         walk_seconds += haversine_km(end.lat, end.lon, existing_end.lat, existing_end.lon) * 1000.0 / WALK_SPEED_MS
 
-    # Name-based node lookup (mirrors find_path.py approach)
-    src_nodes = [nid for nid, d in TIME_GRAPH.nodes(data=True)
-                 if existing_start.name in str(d.get('name', ''))]
-    dst_nodes = [nid for nid, d in TIME_GRAPH.nodes(data=True)
-                 if existing_end.name in str(d.get('name', ''))]
+    # ID-based lookup via MAPPING (GTFS ID prefix match, same as find_path.py).
+    # Name-based lookup is a fallback when the station ID isn't in MAPPING,
+    # because GTFS names often differ from display names in stations.json.
+    src_gtfs = _STATION_MAPPING.get(existing_start.id) if _STATION_MAPPING else None
+    dst_gtfs = _STATION_MAPPING.get(existing_end.id) if _STATION_MAPPING else None
+
+    if src_gtfs:
+        src_nodes = [nid for nid in TIME_GRAPH.nodes() if nid.startswith(src_gtfs)]
+    else:
+        src_nodes = [nid for nid, d in TIME_GRAPH.nodes(data=True)
+                     if existing_start.name in str(d.get('name', ''))]
+
+    if dst_gtfs:
+        dst_nodes = [nid for nid in TIME_GRAPH.nodes() if nid.startswith(dst_gtfs)]
+    else:
+        dst_nodes = [nid for nid, d in TIME_GRAPH.nodes(data=True)
+                     if existing_end.name in str(d.get('name', ''))]
 
     best_transit = float('inf')
+    best_path: list[str] = []
     for src in src_nodes:
         for dst in dst_nodes:
             try:
-                t = nx.dijkstra_path_length(TIME_GRAPH, src, dst, weight='weight')
+                t, p = nx.single_source_dijkstra(TIME_GRAPH, src, dst, weight='weight')
                 if t < best_transit:
                     best_transit = t
+                    best_path = p
             except (nx.NetworkXNoPath, nx.NodeNotFound):
                 continue
 
     if best_transit == float('inf'):
-        return pure_walk_seconds, True
+        return pure_walk_seconds, True, []
 
     transit_total = best_transit + walk_seconds
     is_walking_only = pure_walk_seconds < transit_total
-    return min(pure_walk_seconds, transit_total), is_walking_only
+    return min(pure_walk_seconds, transit_total), is_walking_only, best_path
 
 
 def proximity_score(station: StationFeature, drawn: list[StationInput]) -> float:
@@ -695,28 +798,33 @@ def build_route_comparison(payload: SimulationRequest, route: list[StationInput]
     destination_name = route[-1].name
     new_route_minutes = estimate_new_route_minutes(route, payload.train_service)
 
-    existing_seconds, is_walking_only = _calculate_existing_trip(route)
+    existing_seconds, is_walking_only, best_path = _calculate_existing_trip(route)
     existing_minutes_raw = existing_seconds / 60.0
 
     # The time graph encodes pure in-motion seconds (no wait, no dwell, no
-    # platform walking).  A 1.3× factor brings it in line with real-world
-    # door-to-door trip times (headway + dwell + access).
+    # platform walking). We scale short trips up more aggressively because
+    # fixed overhead like waiting and access dominates them, while long trips
+    # get a gentler multiplier.
     # Walking-only times are not scaled because they already represent real
     # elapsed wall-clock time at walking speed.
-    TRANSIT_REALISM_FACTOR = 1.3
 
     # If the graph returned a real path, mark as available
     all_new = all(st.is_new for st in route)
     available = not all_new and not is_walking_only
+
+    transfer_station: str | None = None
+    second_train: str | None = None
 
     if is_walking_only:
         existing_minutes = int(round(existing_minutes_raw))
         existing_label = 'Walking only (no faster transit route found)'
         first_train = 'Walk'
     else:
-        existing_minutes = int(round(existing_minutes_raw * TRANSIT_REALISM_FACTOR))
+        existing_minutes = scale_transit_minutes_non_linear(existing_minutes_raw)
         existing_label = 'Current network fastest route'
-        first_train = 'Current service'
+        first_train, transfer_station, second_train = _extract_path_lines(
+            best_path, TIME_GRAPH, STOP_ROUTES
+        )
 
     # Fallback: if seconds came back as pure walk and it seems unreasonably low, use heuristic
     if existing_minutes < 1:
@@ -725,6 +833,8 @@ def build_route_comparison(payload: SimulationRequest, route: list[StationInput]
         is_walking_only = False
         existing_label = 'Estimated current network trip'
         first_train = 'Current service'
+        transfer_station = None
+        second_train = None
 
     return RouteComparison(
         available=available,
@@ -733,8 +843,8 @@ def build_route_comparison(payload: SimulationRequest, route: list[StationInput]
         origin_name=origin_name,
         destination_name=destination_name,
         first_train=first_train,
-        transfer_station=None,
-        second_train=None,
+        transfer_station=transfer_station,
+        second_train=second_train,
         existing_travel_minutes=existing_minutes,
         new_route_minutes=new_route_minutes,
         time_saved_minutes=max(0, existing_minutes - new_route_minutes),

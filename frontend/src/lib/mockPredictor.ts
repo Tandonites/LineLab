@@ -17,6 +17,15 @@ const SERVICE_SPEED_MPH: Record<TrainService, number> = {
   express: 28,
 }
 
+function scaleTransitMinutesNonLinear(rawMinutes: number): number {
+  const minutes = Math.max(0, rawMinutes)
+  const baseFactor = 1.05
+  const shortTripBoost = 0.6 * Math.exp(-minutes / 18)
+  const longTripReduction = 0.32 / (1 + Math.exp(-(minutes - 100) / 10))
+  const factor = baseFactor + shortTripBoost - longTripReduction
+  return Math.max(1, Math.round(minutes * factor))
+}
+
 const TRANSFER_HUBS = [
   'Times Sq-42 St',
   '34 St-Herald Sq',
@@ -157,9 +166,13 @@ export async function generateMockRouteComparison(
       end.lines[0] ??
       'subway'
 
-  const existingRouteMinutes = sharedLine
-    ? Math.max(newRouteMinutes + 4, Math.round(routeMiles * 3.6 + 9))
-    : Math.max(newRouteMinutes + 9, Math.round(routeMiles * 4.4 + 14))
+  const rawExistingRouteMinutes = sharedLine
+    ? Math.round(routeMiles * 3.6 + 9)
+    : Math.round(routeMiles * 4.4 + 14)
+  const existingRouteMinutes = Math.max(
+    sharedLine ? newRouteMinutes + 4 : newRouteMinutes + 9,
+    scaleTransitMinutesNonLinear(rawExistingRouteMinutes)
+  )
 
   return {
     available: true,
