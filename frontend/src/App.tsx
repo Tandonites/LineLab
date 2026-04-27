@@ -208,13 +208,6 @@ export default function App() {
     showAllStations: true,
   })
 
-  const setMode = useCallback((mode: Mode) => {
-    setState(s => ({
-      ...s,
-      mode,
-      showAllStations: mode === 'draw' ? true : s.showAllStations,
-    }))
-  }, [])
 
   const setTrainService = useCallback((trainService: TrainService) => {
     setState(s => {
@@ -594,7 +587,7 @@ export default function App() {
         .filter(item => {
           const ridershipRatio = item.prediction.new_line_ridership / Math.max(1, baseline.new_line_ridership)
           const similar = ridershipRatio >= 0.8 && ridershipRatio <= 1.2
-          const cheaper = item.prediction.operational_cost_monthly < baseline.operational_cost_monthly * 0.98
+          const cheaper = item.prediction.operational_cost_monthly < baseline.operational_cost_monthly * 0.995
           return similar && cheaper
         })
         .sort((a, b) => {
@@ -716,7 +709,6 @@ export default function App() {
     <div className="flex h-screen w-screen overflow-hidden bg-[#0f1117]">
       <LeftPanel
         state={state}
-        setMode={setMode}
         setTrainService={setTrainService}
         removeStation={removeStation}
         undoLast={undoLast}

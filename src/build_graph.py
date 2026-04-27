@@ -38,17 +38,33 @@ for trip_id, group in stop_times.groupby("trip_id"):
 for (u, v), times in edge_times.items():
     G.add_edge(u, v, weight=sum(times) / len(times))
     
+# Connect directional platform nodes to their parent station node so that
+# transfer edges (which use parent IDs) are reachable from line chains.
+PLATFORM_ACCESS_SECONDS = 60
+for _, row in stops.iterrows():
+    child = str(row["stop_id"])
+    parent = row.get("parent_station")
+    if pd.isna(parent) or not parent:
+        continue
+    parent = str(parent)
+    if not G.has_node(parent) or not G.has_node(child):
+        continue
+    if G.has_edge(parent, child):
+        G[parent][child]["weight"] = min(G[parent][child]["weight"], PLATFORM_ACCESS_SECONDS)
+    else:
+        G.add_edge(parent, child, weight=PLATFORM_ACCESS_SECONDS)
+
 for _, row in transfers.iterrows():
     u, v = row["from_stop_id"], row["to_stop_id"]
     if u == v:
         continue
-    
+
     # min_transfer_time is in seconds; default to 120s if missing
     t = row.get("min_transfer_time", 120)
     if pd.isna(t):
         t = 120
-    t = int(t) + TRANSFER_PENALTY 
-    
+    t = int(t) + TRANSFER_PENALTY
+
     if G.has_edge(u, v):
         G[u][v]["weight"] = min(G[u][v]["weight"], t)
     else:
